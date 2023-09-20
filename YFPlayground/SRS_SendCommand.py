@@ -20,7 +20,7 @@ def ShowHelp():
 def init(port):
     """
     port is com port, such as "COM3"
-    or a TCP address such as "192.168.11.225"
+    or a TCP address such as "192.168.11.78"
     """
 
     if "COM" in port:

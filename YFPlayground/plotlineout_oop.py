@@ -14,7 +14,6 @@
 #  most data runs where one thing is varied per Run and another thing is varied per frame.
 # v 0.5 8/5/23 tkinter graphics
 # v 0.6 8/25/23 Allow two roi's
-# v 0.7 9/18/23 Add new routines for Cornell testing
 
 #
 # INSTRUCTIONS
@@ -38,7 +37,7 @@
 
 #
 # Issues with mmcmd - try this:
-# $mmclient -s -t &
+# mmclient -s -t &
 # mmcmd open 1
 #
 
@@ -90,8 +89,6 @@ class dataObject:
         self.bTakeData = bTakeData
         self.bAnalyzeData = bAnalyzeData
         self.TEST_ON_MAC = False
-        #self.alternateTitle = None
-        self.runVaryCommand = None
         
 
 
@@ -401,40 +398,6 @@ class dataObject:
             self.roiSumNumDims = 4
             self.fcnPlot = prettyAllCapsInALine    
 
-        # ****************************************************
-        elif self.strDescriptor == "Cornell_Noise":               
-            self.setname = 'xpad-cornell-noise'
-            self.nFrames = 1000  # frames Per Run  
-          
-            # We ARE 'allowed' to change delay param in a run (!)
-            
-            self.integrationTime = 500 # 500ns
-            self.interframeTime = 200  # 200 ns 
-            
-            # create a list of commands to send to hardware via mmcmd 
-            unique_commands = [ 
-                "Cap_Select 0x1FF",  # 8 CAPS
-                "Trigger_Mode 0",     # SW trigger
-                "Exposure_Mode 0"
-            ]
-           
-            #self.runVaryCommand="Readout_Delay"
-            self.varList = [100]
-            self.runFrameCommand = None
-            self.innerVarList = []
-            self.innerVarCommand = "" 
-
-            # ANALYZE PROPERTIES
-            self.roi = [10, 10, 118, 118]
-            self.NCAPS = 8 # can this be pulled from file?
-            self.fcnToCall = calcBackgroundStats
-            self.roiSumNumDims = 3
-            self.fcnPlot = prettyPlot   
-            #self.alternateTitle = "Mean over ROI - Average all images" 
-            self.newTitle = "Mean over ROI - Average all images"
-
-
-        
         else:
              raise Exception(" !Unknown string! ") 
 
@@ -577,7 +540,8 @@ class dataObject:
         Take Data        
         """        
         # Using an SRS DG645 box:
-        IP_ADDR = "192.168.11.225"  
+        #IP_ADDR = "192.168.11.225"     # for keck 002
+        IP_ADDR = "192.168.11.101"      # for keck002 (LLNL)
         c = comObject( 1, IP_ADDR )
         r = c.tryConnect()
 
@@ -617,8 +581,6 @@ class dataObject:
         roiSum = None
         repeat = 0
         title = ""
-        runBase = 1
-        backFile = None
 
         while True:        
 
@@ -628,35 +590,22 @@ class dataObject:
                     foreFile = f'/Users/yoram/Sydor/keckpad/30KV_1.5mA_40ms_f_00015001.raw' # check not sure...
                     
                 else:
-                    foreFile = f'/mnt/raid/keckpad/set-{setname}/run-{runname}/frames/{runname}_{runBase:08d}.raw'
+                    foreFile = f'/mnt/raid/keckpad/set-{setname}/run-{runname}/frames/{runname}_00000001.raw'
                 
                 self.fore = BKL.KeckFrame( foreFile )
                 if self.TakeBG:
-                    backFile = f'/mnt/raid/keckpad/set-{setname}/run-back/frames/back_{runBase:08d}.raw'
+                    backFile = f'/mnt/raid/keckpad/set-{setname}/run-back/frames/back_00000001.raw'
                     self.back =  BKL.KeckFrame( backFile )
 
 
+
                 numImagesF = self.fore.numImages 
-
-                if self.nFrames  * self.NCAPS > 1000:
-                    # we need to read mutiple raw files - only 1000 per file.
-                    self.readAdditionalFiles = {
-                        "baseFilenameF" : foreFile[:-12], "nJumpBy":1000,
-                        "baseFilenameB" : backFile[:-12] if backFile else None
-                    }
-                    numImagesF = self.nFrames  * self.NCAPS
-
-
-                
                 if roiSum is None:
                     if self.roiSumNumDims == 3:
                         roiSum = np.zeros((NRUNS,numImagesF // NCAPS, NCAPS),dtype=np.double)
                     elif self.roiSumNumDims == 4:
                         roiSum = np.zeros((NRUNS,numImagesF // NCAPS, NCAPS, self.roi[2]),dtype=np.double)
 
-
-                            
-                        
 
                 # create global big arrays to hold images
                 self.foreStack = np.zeros((numImagesF // NCAPS, NCAPS,512,512),dtype=np.double)
@@ -752,7 +701,7 @@ def plotROI(cap, zSX, zSY, nTap, W, H):
 
 #
 # Plot <n> caps. Plot mean of ROI versus frame number
-#  data is 3 dimensions: data should be [nRuns, nFrames, nCaps]
+#
 def prettyPlot(data, title, options = None):
     nruns = len(data)
     ncaps = len(data[0,0] )
@@ -774,11 +723,8 @@ def prettyPlot(data, title, options = None):
             elif c%5 == 4:
                 clr = (0,0,x)
 
-            if n == 0:
-                lbl = f"Cap:{c+1}"    
-
             ax.plot( range(nframes), data[n,:,c], 
-                color=clr, label = lbl )
+                color=clr )
 
 
     plt.legend()
@@ -882,102 +828,6 @@ def prettyAllCapsInALine(data, title, options = None):
     plt.title( title )
     ax.yaxis.set_minor_locator( MultipleLocator(1000))
     #plt.show(block=True) 
-
-#
-#  Used with Cornell_Noise
-#
-def calcBackgroundStats(dobj, data=None, runnum = 0):
-    """
-   
-    title 
-    data is [#run, #frame, #cap]
-    runnum increments from 0 to #run-1
-    NOTE - 
-    """
-   
-    back = None
-    
-    if hasattr(dobj, "back"):
-        back = dobj.back
-
-    fore = dobj.fore
-    roi = dobj.roi
-    ncaps = dobj.NCAPS
-    ave = np.zeros((8,512,512),dtype=np.double)
-    imageCount = 0
-
-    loopAgain = False
-    raf = None
-    runBase = 1
-
-    try:
-        raf = dobj.readAdditionalFiles
-    except:
-        pass
-
-    loopAgain = True
-
-    while loopAgain:
-        for fIdex in range( fore.numImages):
-            (mdF,dataF) = fore.getFrame()
-            if back:
-                (mdB,dataB) = back.getFrame()
-                dataF = dataF - dataB #  Put F-B in F as a kludge.
-
-            frameNum = fIdex // ncaps  # not a typo "//" is integer division 
-            dataArray = np.resize(dataF,[512,512])
-            dobj.foreStack[frameNum,(mdF.capNum-1) % ncaps,:,:] = dataArray
-            ave[ (mdF.capNum-1) % ncaps,:,:] += dataArray
-            imageCount += 1
-
-        if raf:
-            runBase += raf["nJumpBy"]
-            nextFileName = raf["baseFilenameF"] + f"{runBase:08d}.raw"
-            try:
-                fore = dobj.fore = BKL.KeckFrame( nextFileName )
-                if VERBOSE:
-                    print(f"Open Foreground:{nextFileName}")
-            except Exception as e:
-                loopAgain = False
-
-            if back:
-                nextFileName = raf["baseFilenameB"] + f"{runBase:08d}.raw"
-                try:
-                    back = dobj.back = BKL.KeckFrame( nextFileName )
-                    if VERBOSE:
-                       print(f"Open Background:{nextFileName}")
-
-                except Exception as e:
-                    loopAgain = False
-
-        else:
-            loopAgain = False
-            break  # EXIT WHILE
-        
-    # WHILE } 
-
-    for ic in range( ncaps ):
-        ave[ ic, :, :] = ave[ ic, :, :] / (imageCount/ncaps)
-
-
-    #dobj.ave = ave  # Python is awesome - just attach this new thing to the object.
-
-    # rio is [X,Y,W,H]
-    startPixY = roi[1]
-    endPixY = startPixY + roi[3]
-    startPixX = roi[0]
-    endPixX = startPixX + roi[2]
-    nImages =  fore.numImages // ncaps  # not a typo "//" is integer division 
-    
-
-    for fn in range( nImages ): 
-        for cn in range (ncaps):
-            V = np.average( dobj.foreStack[fn, cn, startPixY:endPixY, startPixX:endPixX] ) - \
-                np.average( ave[cn, startPixY:endPixY, startPixX:endPixX] )
-            data[runnum, fn,cn] = V
-            #print( fn, cn, roiSum)
-
-    return data
 
 
 def plotLinearity(dobj, data=None, runnum = 0):
@@ -1093,8 +943,6 @@ def defineListOfTests():
     lot.append( ("Move_IR_Along_Caps", "SRS single bright pulse, moves from cap1 to cap 8") )
     lot.append( ("Move_IR_Along_Caps_2ROIS", "SRS single bright pulse, moves from cap1" \
         "to cap 8. Has a bright ROI and a dark ROI.") )
-    
-    lot.append( ("Cornell_Noise", "Take 1000 images x 8CAPS. Copmpute RMS from ave.") )
     
     return lot
 
