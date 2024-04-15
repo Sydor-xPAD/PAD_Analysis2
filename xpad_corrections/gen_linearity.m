@@ -56,6 +56,7 @@ asic_count = asic_x_count * asic_y_count;
 
 ## Load in the whole stack
 [raw_dark, num_frames] = read_xpad_image(dark_image_filename, sensor_bpp, offset, gap, image_width, image_height);
+raw_dark_base = raw_dark;
 raw_dark = double(raw_dark);
 printf("Total dark frames: %i\n", num_frames);
 
@@ -65,6 +66,9 @@ endif
 
 ## Compute the background image
 raw_dark = mean(raw_dark,3);
+
+## FIXME DEBUGGING REMOVETHIS
+#raw_dark = raw_dark - raw_dark;
 
 ## We now need to NaN out the bad pixels.  These are contained in two PGM files
 ## Change the filenames here to suit.
@@ -84,7 +88,7 @@ mu_vals = zeros(asic_count, num_fg);
 
 for fg_idx=1:num_fg
   bright_filename = bright_file_list{fg_idx}
-  [raw_bright, num_frames] = read_xpad_image(bright_filename, 16, offset, gap, 512, 512);
+  [raw_bright, num_frames] = read_xpad_image(bright_filename, sensor_bpp, offset, gap, 512, 512);
 
   raw_bright = double(raw_bright);
   printf("Loaded %i foreground frames.\n", num_frames);
@@ -98,6 +102,8 @@ for fg_idx=1:num_fg
     curr_slice(bad_pixel_loc) = NaN;
     raw_bright(:,:,slice_idx) = curr_slice;
   endfor
+
+  imagesc(raw_bright)
   
   asic_idx = 0;
   for row_idx=1:asic_y_count
