@@ -3,6 +3,7 @@
 # File: Fix_MMData.py
 # History
 # v 1.0 Created 13 DEC 2023
+# v 1.1 updated 27APR2024 - subtract base
 # 
 # Option: 'FixBadCal'
 #   Loads a dataset that was taken with default 'correction values'
@@ -32,7 +33,8 @@ def CorrectASIC(nAsic:int, dataFrame):
 
     W = 128 
     H = 128
-    cv = 7000
+    base = 7000
+    cv = 16384
     sx = (3- (nAsic % 4) )* W
     sy = (nAsic // 4) * H
 
@@ -51,9 +53,9 @@ def CorrectASIC(nAsic:int, dataFrame):
     region = dataFrame[sy:sy+H, sx:sx+W]
 
     # Perform vectorized operations
-    d = region // cv
-    a = region - cv * d
-    dataFrame[sy:sy+H, sx:sx+W] = a + d * correction_values[nAsic]
+    d = (region - base) // cv
+    a = (region-base) - cv * d
+    dataFrame[sy:sy+H, sx:sx+W] = a + d * correction_values[nAsic] + base
     return dataFrame
 
 def FixBadCal():
