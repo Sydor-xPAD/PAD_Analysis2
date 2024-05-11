@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # File: Take_and_analyze_Airbox013.py
-# Description - Used to Take and Analyze data on MMPAd - Aitrbox. Silicon Sensor
+# Description - Used to Take and Analyze data on MMPAD - Airbox. Silicon Sensor
 # Requires an SRS box connected via Ethernet.   Varies a parameter (such as VREF_BUF) while
 # sweeping the light source intensity by varying the number of pulses in BURST mode. 
 # Used to map out the linearity and perhaps find the most-linear on DC biases.
 #
-# History
+# History 
 # v 0.1 6/13/23 YF - Inception
 # v 0.2 6/29/23 YF - Shift to not using any bash scripts. Instead commands run directly from Python.
 #
