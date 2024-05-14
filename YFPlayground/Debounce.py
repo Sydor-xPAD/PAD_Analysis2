@@ -72,8 +72,12 @@ class dataObject:
       self.fpWidth = (3,10)
 
       self.backFile = self.rootPath + f"sucrose_bg.raw"
-      self.foreFile = self.rootPath + f"sucrose_1pt.raw"
+      ##self.foreFile = self.rootPath + f"sucrose_1pt.raw"
+      self.foreFile = self.rootPath + f"output.raw"
      
+   def doCorrelarion(self):
+      pass
+
 
    def doDebounce(self):
       debounceMatrix = np.zeros( (self.numImagesF, 16), dtype = np.dtype('double')) 
@@ -379,12 +383,73 @@ class dataObject:
 
      
 
-     
-   
-   def makePlotHistogram(self):
-      pass 
+
+   def split_string_to_ints(self, string, default_values=('0', '0', '0')):
+      values = string.split(',')
+      value1, value2, value3 = (values + list(default_values))[:3]
+      return int(value1), int(value2), int(value3)
+
+   def plotCorrelation(self):
+      dim0 = self.meanArray.shape[0]  # # frames
+      dim1 = self.meanArray.shape[1]  # # asics
+
+      fig, axes = plt.subplots(nrows=1, ncols=4, figsize=(16, 4))
+
+      # Ask for user input and update the plot
+      if INTERACTIVE_MODE:
+         while True:
+            user_input = input("Enter frame A1,A2  (or 'q' to quit): ")
+            if user_input.lower() == 'q':
+               break
+            try:
+               a1, a2, _ = self.split_string_to_ints(user_input)
+               
+               # TODO
+               # Plot data in each figure
+               for i,ax in enumerate(axes.flat):
+                  ax.cla()
+                  if a2+i > 15:
+                     break
+                  ax.plot(self.meanArray[a1, :], self.meanArray[a2+i, :], 
+                          label=f'Figure {i+1}')
+                  ax.set_title(f'Figure {a1} vs {a2+i}')
 
 
+               for ax in axes.flat:
+                  ax.set_xlim(-150, 300)  
+                  ax.set_ylim(-150, 300)  
+               
+
+               fig.suptitle(f"ASICs: {a1} vs {a2} +0, +1, +2, +3")
+               # Redraw the canvas
+               fig.canvas.draw()
+               fig.canvas.flush_events()
+               plt.show(block=False)  # Show the plot without blocking
+               
+            except ValueError:
+               print("Invalid input. Please enter a number or 'q' to quit.")
+
+      else:
+         # Compute the correlation coefficient matrix
+         asicA = 4
+         for i in  range(16):
+            arr1 = self.meanArray[asicA, :]
+            arr2 = self.meanArray[i, :]
+
+            # Filter out values outside the range -200 to +200
+            mask1 = np.logical_and(arr1 >= -200, arr1 <= 200)
+            mask2 = np.logical_and(arr2 >= -200, arr2 <= 200)
+            mask = np.logical_and( mask1, mask2)
+
+
+            # Apply the masks to the arrays
+            filtered_array1 = arr1[mask]
+            filtered_array2 = arr2[mask]
+            correlation_matrix = np.corrcoef(filtered_array1, filtered_array2)
+
+            # Extract the correlation coefficient
+            correlation_coefficient = correlation_matrix[0, 1]
+            print( f"A:{asicA} vs A:{i}, {round(correlation_coefficient,4)}" ) 
 
    def makePlot(self):
       """
@@ -471,6 +536,11 @@ class dataObject:
       elif self.strDescriptor == "2-DoCorrection":            
          self.fcnToCall = self.doDebounce
          self.fcnPlot   =  None
+
+      elif self.strDescriptor == "3-Correlations":   
+         self.corr = (4,5)         
+         self.fcnToCall = self.makeData
+         self.fcnPlot   =  self.plotCorrelation   
      
 
 
@@ -487,7 +557,7 @@ class dataObject:
       Load up the runs, and analyze
       """
       self.fcnToCall()
-      if self.fcnPlot():
+      if self.fcnPlot:
          self.fcnPlot()
 
 
@@ -506,6 +576,7 @@ def defineListOfTests():
     lot = []
     lot.append( ("1-GetBounce","Run once. Will generate text file of debounces") )
     lot.append( ("2-DoCorrection","Applies debounce corrections and saves new data.") )
+    lot.append( ("3-Correlations", "Look at correlations of means between two ASICs") )
     # TODO - add more here
     return lot
 
