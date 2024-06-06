@@ -9,3 +9,5 @@
 .DS_Store
 config.json
 .DS_Store
+bestK.pkl
+ana_dig.pkl
