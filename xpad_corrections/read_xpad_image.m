@@ -1,7 +1,7 @@
 function [img_stack, num_frames] = read_xpad_image(filename, bpp, offset, gap, width, height, MAX_FRAMES = 1005)
   ## Make the image to store into
   img_stack = zeros(height, width, MAX_FRAMES);
-  
+
   img_file = fopen(filename, 'rb');
 
   data_pending = 1;
@@ -21,11 +21,11 @@ function [img_stack, num_frames] = read_xpad_image(filename, bpp, offset, gap, w
   curr_array = curr_array';
   num_frames = 1;
   curr_array_orig = curr_array;
-  
+
   fseek(img_file, gap, SEEK_CUR);
 
   img_stack(:,:,num_frames) = curr_array;
-  
+
   while(data_pending == 1)
     ## Read in the data
     [curr_array, nread] = fread(img_file, [width, height], data_type, 0, 'l');
@@ -57,7 +57,7 @@ function [img_stack, num_frames] = read_xpad_image(filename, bpp, offset, gap, w
 
     num_frames++;                              #Increment the count
     img_stack(:,:,num_frames) = curr_array;    # Append the new slice
-  
+
     fseek(img_file, gap, SEEK_CUR); # Skip the gap
   endwhile
 
