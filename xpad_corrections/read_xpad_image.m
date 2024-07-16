@@ -17,7 +17,7 @@ function [img_stack, num_frames] = read_xpad_image(filename, bpp, offset, gap, w
     data_type = 'uint32';
   endif
 
-  [curr_array, nread_orig] = fread(img_file, [height, width], data_type, 0, 'l'); #-=-= XXX May need to change from big-endian to little endian at some point
+  [curr_array, nread_orig] = fread(img_file, [width, height], data_type, 0, 'l'); #-=-= XXX May need to change from big-endian to little endian at some point
   curr_array = curr_array';
   num_frames = 1;
   curr_array_orig = curr_array;
@@ -28,17 +28,20 @@ function [img_stack, num_frames] = read_xpad_image(filename, bpp, offset, gap, w
   
   while(data_pending == 1)
     ## Read in the data
-    [curr_array, nread] = fread(img_file, [height, width], data_type, 0, 'l');
+    [curr_array, nread] = fread(img_file, [width, height], data_type, 0, 'l');
     curr_array = curr_array';
 
-    disp("Reading frame: ")
-    disp(num_frames+1)
-    disp(nread)
-    disp(nread_orig)
-    disp(filename)
-    disp(data_type)
-    disp(offset)
-    disp(gap)
+    quiet = 1;
+    if not(quiet)
+      disp("Reading frame: ")
+      disp(num_frames+1)
+      disp(nread)
+      disp(nread_orig)
+      disp(filename)
+      disp(data_type)
+      disp(offset)
+      disp(gap)
+    endif
     
     if (nread != height*width) || (num_frames >= MAX_FRAMES)   # Incomplete read or maximum frame count reached -- assume finish
       if (num_frames >= MAX_FRAMES)
