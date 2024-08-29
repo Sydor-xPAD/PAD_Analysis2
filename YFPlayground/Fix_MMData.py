@@ -4,10 +4,15 @@
 # History
 # v 1.0 Created 13 DEC 2023
 # v 1.1 updated 27APR2024 - subtract base
-# 
+# v 1.2 updated 29AUG2024
+
 # Option: 'FixBadCal'
 #   Loads a dataset that was taken with default 'correction values'
 #  Undo, then apply the correct values. 
+# INSTRUCTIONS
+# Scroll down to main, and set the two variables:  examples:
+#     rootDir = '/mnt/raid/mmpad/set-MMPAD_OCT2023/'
+#     runName = "run-sucrose_bg"
 
 import numpy as np
 import Big_MM_load as BML
@@ -15,6 +20,7 @@ import os
 import matplotlib.pyplot as plt
 import sys
 from textwrap import wrap
+from raw_to_mmpad import convert
 
 #
 #
@@ -31,48 +37,36 @@ def CorrectASIC(nAsic:int, dataFrame):
                           7164, 7354, 7297, 7000,
                           6796, 7189, 7111, 7057 ]
 
+
     W = 128 
     H = 128
-    base = 7000
+   # base = 7000
     cv = 16384
     sx = (3- (nAsic % 4) )* W
     sy = (nAsic // 4) * H
-
-    # Stupid slow
-    # for x in range(sx, sx+W):
-    #     for y in range(sy, sy+H):
-    #         v = dataFrame[y,x]
-    #         d = v // cv      # digital counts
-    #         a = v - cv * d   # analog residual
-    #         # Apply correction
-    #         dataFrame[y,x] = a + d * correction_values[nAsic ]       
-    # return dataFrame
 
     #Vectorized
     # Extract the region of interest
     region = dataFrame[sy:sy+H, sx:sx+W]
 
     # Perform vectorized operations
-    d = (region - base) // cv
-    a = (region-base) - cv * d
-    dataFrame[sy:sy+H, sx:sx+W] = a + d * correction_values[nAsic] + base
+    d = (region) // cv
+    a = (region) - cv * d
+    dataFrame[sy:sy+H, sx:sx+W] = a + d * correction_values[nAsic]
+    #dataFrame[sy:sy+H, sx:sx+W] = d * correction_values[nAsic]
     return dataFrame
 
-def FixBadCal():
+def FixBadCal( rootDir, _runName):
     PRINTDEBUGINFO = 1
 
-
-    rootDir = '/mnt/raid/mmpad/set-ID7B2_Oct2023/'
-
-    # Set the run names here. Omit the 'run' part of the run name!
-    runName = '720frm_sucrose_09_100pct_02'
- 
+    # Omit the 'run' part of the run name!
+    runName = _runName[4:]
 
     foreFile = f"{rootDir}run-{runName}/frames/{runName}_00000001.raw"
 
     foreImage = open(foreFile,"rb")
     numImagesF = int(os.path.getsize(foreFile)/(2048+512*512*4))
-    foreStack = np.zeros((numImagesF,512,512),dtype=np.double)
+    foreStack = np.zeros((numImagesF,512,512),dtype=np.uint32)
 
     # Load all images into one array
     for fIdex in range(numImagesF):
@@ -83,7 +77,16 @@ def FixBadCal():
             foreStack[ fIdex, :, :] = CorrectASIC( nAsic, dataFrame) 
 
 
+    # Save raw file to disk. Use a temporary file name.
+    rawfilename = "temp_"+ runName + ".raw"
+    foreStack.tofile(rawfilename)
     
+    return rawfilename
+    
+    
+    
+
+
     if 1:
        
         data = foreStack[0,:,:]
@@ -107,6 +110,14 @@ def FixBadCal():
 
 if __name__ == "__main__":
     print(f"Running Fix_MMData {__name__}")
+    # LINUX: rootDir = '/mnt/raid/mmpad/set-MMPAD_OCT2023/'
+    rootDir = 'c:/temp/mmpaddata/'  # Windows
     
-    FixBadCal()
-   
+    runName = "run-sucrose_bg"
+
+    if 1:
+        rawfilename = FixBadCal( rootDir, runName)
+        
+        outputfilename = "fixed-" + runName[4:]
+        convert( rawfilename, outputfilename) # appends "00000001.raw" to filename
+    
