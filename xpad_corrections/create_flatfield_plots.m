@@ -105,6 +105,15 @@ if (num_skip_frames > 0)
   num_bright_frames = num_bright_frames-num_skip_frames;
 endif
 
+## Separate the image into a part for corrections and a part for analysis follopwing
+
+full_image_count = num_bright_frames/num_caps;
+corrections_image_count = ceil(full_image_count*0.2); # Use 90 percent for corrections
+analysis_image_count = full_image_count - corrections_image_count; # Remainder for analysis
+
+analysis_bright_raw = bright_raw(:,:,((corrections_image_count+1)*num_caps):full_image_count); # Separate the analysis images
+bright_raw = bright_raw(:,:,1:(corrections_image_count*num_caps));
+
 ## With the bright image loaded, we can average the values per-cap
 bright_image = avg_caps(bright_raw, num_caps);
 clear bright_raw
@@ -119,7 +128,13 @@ if (num_caps == 1)
   bg_sub_image = new_bg_image;
 endif
 
+## Now background subtract the bright images
+for frame_idx=1:analysis_image_count
+  analysis_bright_raw(:,:,frame_idx) = analysis_bright_raw(:,:,frame_idx) - dark_image(:,:,mod(frame_idx,num_caps)+1);
+endfor
+
 disp('Completed background subtraction')
+
 
 ## We now need to NaN out the bad pixels.  These are contained in two PGM files
 ## Change the filenames here to suit.
@@ -147,17 +162,6 @@ flat_raster = zeros(image_height, image_width, num_caps);
 
 pix_std = zeros(asic_count, num_caps);
 pix_mean = zeros(asic_count, num_caps);         # -=-= TODO Make generic
-pix_fq = zeros(asic_count, num_caps);
-pix_tq = zeros(asic_count, num_caps); #First and third quartiles
-pix_rawmean = zeros(asic_count, num_caps);
-pix_rawmed = zeros(asic_count, num_caps);
-
-
-flat_mean = zeros(asic_count, num_caps);
-flat_fq = zeros(asic_count, num_caps);
-flat_tq = zeros(asic_count, num_caps);
-flat_med = zeros(asic_count, num_caps);
-
 for cap_idx = 1:num_caps
   curr_frame = bg_sub_image(:,:,cap_idx);
   ## Second parameter below is the threshold of gain deemed too low.
@@ -186,8 +190,6 @@ for cap_idx = 1:num_caps
       asic_idx = asic_idx + 1;
 
       curr_asic_pix = curr_frame(row_lower:row_upper, col_lower:col_upper);
-      curr_asic_line = curr_asic_pix(1:numel(curr_asic_pix));
-      curr_asic_line = curr_asic_line(find(isfinite(curr_asic_line)));
       curr_flat_asic = flat_raster(row_lower:row_upper,col_lower:col_upper,cap_idx);
       curr_flat_asic = reshape(curr_flat_asic, 1, []);
       curr_flat_asic = curr_flat_asic(find(isfinite(curr_flat_asic)));
@@ -196,25 +198,9 @@ for cap_idx = 1:num_caps
       if isempty(flat_pix)
         pix_std(asic_idx, cap_idx) = NaN;
         pix_mean(asic_idx, cap_idx) = NaN;          # This should be an invalid value
-        pix_rawmean(asic_idx, cap_idx) = NaN;
-        flat_mean(asic_idx, cap_idx) = NaN;
-        flat_fq(asic_idx, cap_idx) = NaN;
-        flat_tq(asic_idx, cap_idx) = NaN;
-        pix_rawmed(asic_idx, cap_idx) = NaN;
-        flat_med(asic_idx, cap_idx) = NaN;
       else
         pix_std(asic_idx, cap_idx) = std(10*log10(flat_pix));
 	pix_mean(asic_idx, cap_idx) = 10*log10(mean(curr_flat_asic));
-        quartiles = prctile(curr_asic_line, [0.25 0.75 0.5]);
-        pix_fq(asic_idx, cap_idx) = quartiles(1);
-        pix_tq(asic_idx, cap_idx) = quartiles(2);
-        pix_rawmed(asic_idx, cap_idx) = quartiles(3);
-        pix_rawmean(asic_idx, cap_idx) = mean(curr_asic_line);
-        flat_mean(asic_idx, cap_idx) = mean(curr_flat_asic);
-        quartiles = prctile(curr_flat_asic, [0.25 0.75 0.5 ]);
-        flat_fq(asic_idx, cap_idx) = quartiles(1);
-        flat_tq(asic_idx, cap_idx) = quartiles(2);
-        flat_med(asic_idx, cap_idx) = quartiles(3);
       endif
     endfor
   endfor
@@ -246,20 +232,24 @@ xlabel("Cap Number")
 ylabel("Std Dev of Flatfield Gain (dB)")
 print asic_flatness.png
 
+## Big Analysis Time
+
+## -=-= TODO IM Expand for all ASICs and caps
+# Get Cap 1, ASIC 0
+analysis_stack = analysis_bright_raw(1:asic_height,1:asic_width,1:num_caps:(analysis_image_count*num_caps));
+max_pairs = floor(analysis_image_count/2); #Maximum number of pairs
+pair_array = gen_pairs_array(max_pairs);
+pair_std = asbl_paired_img(analysis_stack, pair_array, @std);
+pair_mean = asbl_paired_img(analysis_stack, pair_array, @mean);
+pair_var = asbl_paired_img(analysis_stack, pair_array, @var);
+x_reg = [(pair_array')*0+1 1./sqrt(pair_array')];
+coeff_reg = (x_reg'*x_reg)^-1*x_reg'*pair_std';
+y_reg = coeff_reg(1)+coeff_reg(2)./sqrt(pair_array);
+fixed_noise_x = [pair_array(1) pair_array(size(pair_array)(2))];
+fixed_noise_y = [coeff_reg(1) coeff_reg(1)];
 figure(3)
-subplot(1,1,1)
-errorbar(1:asic_count, pix_rawmean(:,1), pix_rawmean(:,1)-pix_fq(:,1), pix_tq(:,1)-pix_rawmean(:,1))
-hold on
-plot(1:asic_count, pix_rawmed(:,1), 'r-')
-hold off
-
-figure(4)
-subplot(1,1,1)
-errorbar(1:asic_count, flat_mean(:,1), flat_mean(:,1)-flat_fq(:,1), flat_tq(:,1)-flat_mean(:,1))
-hold on
-plot(1:asic_count, flat_med(:,1), 'r-')
-hold off
-
+#plot(pair_array, pair_std, "r-*", pair_array, pair_mean, 'b-', pair_array, pair_var, 'g-')
+plot(pair_array, pair_std, "r-*;Measured Noise;", pair_array, pair_mean, 'b-^;Signal Mean;', pair_array, y_reg, 'g-s;Projected Noise;', fixed_noise_x, fixed_noise_y, "v-v;Calculated Fixed Noise;")
 # YF test
 #imshow(curr_frame)
 

@@ -399,16 +399,18 @@ class Peak_Image:
         return total_dist
 
 # Set some of the geometric parameters
-delta_x_geo = [-(20.23/2 + 19.62) , (20.23/2)] # Distances in millimeters
-delta_y_geo = [-(22 + 23.6/2.0), -(23.6/2.0), (23.6/2.0), (22 + 23.6/2.0)] # Distances in millimeters
+delta_x_geo = [-69.97, -69.97+19.62+20.48, 69.970-19.62-20.48-19.62, 69.97-19.62] # Distances in millimeters
+delta_y_geo = [-(22 + 22.9/2.0), -(22.9/2.0), (22.9/2.0), (22 + 22.9/2.0)] # Distances in millimeters
     
 # The path of the peak-detected image
-maskPath = "xpad_corrections/geocal_full_mask.tiff"
+maskPath = "/home/iainm/temp/airbox_dup.tiff"
+maskPath = "perfect_grid.tiff"
+maskPath = "rot_pinhole.tiff"
 
 # Read in the image
 data = imageio.imread(maskPath)
 #-=-= Changed file
-data = imageio.imread("xpad_corrections/geocal_full_mask.tiff")
+data = imageio.imread(maskPath)
 
 print("Image Shape: {}".format(data.shape))
 print("Image Type: {}".format(data.dtype))
@@ -437,7 +439,7 @@ else:
 geocal_img.calc_CoM();
 
 for row_idx in range(4):
-    for col_idx in range(4):
+    for col_idx in range(8):
         com_list = geocal_img.com_in_asic((row_idx, col_idx))
         print("ASIC {},{} has {} CoM.".format(row_idx, col_idx, len(com_list)))
 
@@ -477,7 +479,7 @@ asic_ctr = [];
 asic_grid = [];  # A list of peaks for each ASIC
 asic_fit_info = [];
 for asic_row in range(4):
-    for asic_col in range(4):
+    for asic_col in range(8):
         geocal_img.set_asic(asic_row, asic_col)
         res1 = minimize(geocal_img.calc_err, [1.0, 0, asic_row*128.0 + 0.5*128, asic_col*128.0+0.5*128], method='nelder-mead')
         #print(res1)
@@ -491,12 +493,12 @@ for asic_row in range(4):
 
 
 sm_list = []
-for sm_idx in range(8):
+for sm_idx in range(16):
     curr_submodule = Submodule(asic_fit_info[sm_idx*2], asic_fit_info[sm_idx*2+1])
-    asic_row = int(sm_idx / 2)
-    asic_col = (sm_idx % 2) * 2;
-    sm_row = int(sm_idx /2)
-    sm_col = sm_idx % 2
+    asic_row = int(sm_idx / 4)
+    asic_col = (sm_idx % 4) * 2;
+    sm_row = int(sm_idx /4)
+    sm_col = sm_idx % 4
     nom_ctr_y =  asic_row * ASIC_HEIGHT + int(ASIC_HEIGHT/2); # Half-way down an ASIC
     nom_ctr_x_left = asic_col * ASIC_WIDTH + int(ASIC_WIDTH/2); # 2 ASICs across per submodule, plus half-way across an ASIC
     nom_ctr_x_right = nom_ctr_x_left + ASIC_WIDTH;             # One ASIC to the right of the of the one just calculated
@@ -515,9 +517,9 @@ geo_offset_y = 9999             # Ibid
 geoparams_filename = "geocal_python.txt"
 geoparams_file = open(geoparams_filename, "w")
 for pass_idx in range(2):
-    for submodule_idx in range(8):
-        sm_row = int(submodule_idx / 2)
-        sm_col = int(submodule_idx % 2)
+    for submodule_idx in range(16):
+        sm_row = int(submodule_idx / 4)
+        sm_col = int(submodule_idx % 4)
         asic_idx = int(submodule_idx * 2); # Two ASICs per submodule; grab the left ASIC
         pixel_size = 0.150;     # Pixel size in mm
         curr_sm = sm_list[submodule_idx]
@@ -539,9 +541,19 @@ for pass_idx in range(2):
             if (gy < geo_offset_y):
                 geo_offset_y = gy
         else:
-            gx = gx - geo_offset_x
-            gy = gy - geo_offset_y
-            correction_string = "{:d}, {:d}, {}, {:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}, {:d}".format(submodule_idx, 160, "1A", avg_theta * 57.295, gx, gy, avg_mag, curr_sm.total_err, 0, 0)
+            gx = gx - geo_offset_x + 5
+            gy = gy - geo_offset_y + 5
+            # The submodules are labeled differently in the file than in the computation
+            cart_row = submodule_idx // 4 # Cartesian Row; four submodules
+            cart_col = submodule_idx % 4 # Cartesian Column
+            head_row = cart_row;         # Only four rows, so no change
+            head_col = cart_col % 2      # Two submodules per head row
+            head_num = 0                 # Start from head 0
+            head_sm = head_row * 2 + head_col # Simple offset
+            if (cart_col >= 2):
+                head_num = 1;   # Right half is second head
+            sm_idx_new = head_sm + 8*head_num # 8 submodules per head
+            correction_string = "{:d}, {:d}, {}, {:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}, {:d}".format(sm_idx_new, 160, "1A", avg_theta * 57.295, gx, gy, avg_mag, curr_sm.total_err, 0, 0)
             print(correction_string)
             geoparams_file.write(correction_string + "\n")
         

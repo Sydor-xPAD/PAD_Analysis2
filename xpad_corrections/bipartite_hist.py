@@ -1,29 +1,50 @@
-import MaskExtract
 import os
 import numpy as np
 import matplotlib.pyplot as plt
 import Big_keck_load as BKL
-import CreateSim
 import math
 import pickle
 import sys
 import configparser
 from scipy.optimize import curve_fit
+import scipy
 import glob
 
-cfg_parser = configparser.ConfigParser()
-cfg_parser.read("photon_mask.ini")
+class lse_min:
+    def __init__(self):
+        self.x_data = [];
+        self.y_data = [];
+        self.min_func = None
 
-fit_max_eval = int(cfg_parser['Default']['fit_max_eval'])
-bgFilename = cfg_parser['Default']['hist_bg_filename']
-fgGlobPattern = cfg_parser['Default']['hist_fg_globpattern']
-maskFilename = cfg_parser['Default']['mask_filename']
-image_width = int(cfg_parser['Default']['image_width'])
-image_height = int(cfg_parser['Default']['image_height'])
+    def do_lse(self, x_vals):
+        
+        calc_y = self.min_func(self.x_data, *x_vals)
+        total_err = 0
+        for y_idx in range(len(self.y_data)):
+            total_err = total_err + (calc_y[y_idx]-self.y_data[y_idx])**2;
+        return total_err
+
+def do_lse_real(x_vals, args):
+    min_obj = args;
+    return min_obj.do_lse(x_vals);
+    
+    
+cfg_parser = configparser.ConfigParser()
+cfg_parser.read("bipartite.ini")
+
+fit_max_eval = int(cfg_parser['Analysis']['fit_max_eval'])
+bgFilename = cfg_parser['Analysis']['bg_image_filename']
+fgFilename = cfg_parser['Analysis']['fg_image_filename']
+image_width = int(cfg_parser['Default']['img_width'])
+image_height = int(cfg_parser['Default']['img_height'])
 num_caps = int(cfg_parser['Default']['num_caps'])
 file_offset = int(cfg_parser['Default']['file_offset'])
 file_gap = int(cfg_parser['Default']['file_gap'])
-sensor_bpp = int(cfg_parser['Default']['sensor_bpp'])
+sensor_bpp = int(cfg_parser['Default']['bpp'])
+asic_width = int(cfg_parser['Default']['asic_width'])
+asic_height = int(cfg_parser['Default']['asic_height'])
+asic_start_x = int(cfg_parser['Analysis']['asic_start_x'])
+asic_start_y = int(cfg_parser['Analysis']['asic_start_y'])
 
 sys_type = cfg_parser['Default']['sys_type']
 if sys_type == 'keckpad':
@@ -34,11 +55,7 @@ else:
     print("Unrecognized system type: " + sys_type)
     sys.exit(1)
 
-clipPos = int(cfg_parser['Default']['clip_pos'])
-clipNeg = int(cfg_parser['Default']['clip_neg'])
-clip_thresh = float(cfg_parser['Default']['clip_thresh'])
-hist_bin_min = int(cfg_parser['Default']['hist_bin_min'])
-hist_bin_max = int(cfg_parser['Default']['hist_bin_max'])
+trim_pixels = int(cfg_parser['Analysis']['trim_pixels'])
 
 fit_invoke = 0;
 def twoGauss(xdata, a, b, c, d, e, f, g):
@@ -49,6 +66,21 @@ def twoGauss(xdata, a, b, c, d, e, f, g):
     for x_idx in range(xdata.size):
         x = xdata[x_idx];
         result_y[x_idx] = a * math.exp(-0.5*((x-b)/c)**2) + d * math.exp(-0.5*((x-e)/f)**2) + g;
+    #print(xdata, result_y)
+    return result_y;
+
+def twoClipQuad(xdata, a, b, c, d, e, f, g):
+    global fit_invoke
+    fit_invoke += 1
+    result_y = np.arange(xdata.size).astype(np.double);
+    for x_idx in range(xdata.size):
+        x = xdata[x_idx];
+        #quad_one = ((a*x)+b)*x+c;
+        #quad_two = ((d*x)+e)*x+f;
+        quad_one = a*(x-b)**2+c;
+        quad_two = d*(x-e)**2+f;
+        
+        result_y[x_idx] = np.max([quad_one, quad_two]);
     #print(xdata, result_y)
     return result_y;
 
@@ -129,9 +161,6 @@ CAP_LIMIT = num_caps            # Start by iterating over all caps
 if test_mode:
     CAP_LIMIT = 1               # Only test first cap if in test mode
     
-pFolder = "vref_50kv"
-dFolder = "vref"
-
 backImageData = open(bgFilename,"rb")
 
 backStack = np.zeros((num_caps,image_height,image_width),dtype=np.double)
@@ -143,39 +172,78 @@ for fIdex in range(numImages):
    backStack[(payload[3]-1)%num_caps,:,:] += np.resize(payload[4],[image_height,image_width])
 backStack = backStack/ (numImages/num_caps)
 
+# Iterate over all foreground images
+fgImageFile = open(fgFilename, "rb");
+numFgImages = int(os.path.getsize(fgFilename)/(file_gap+image_height*image_width*sensor_bpp/8));
+fgStack = np.zeros((num_caps,image_height,image_width),dtype=np.double)
 
-# Initialize the extractor
-pixelExtractor = MaskExtract.MaskExtractor();
-pixelExtractor.load_mask(maskFilename);
-pixelExtractor.singlePixelMat = pixelExtractor.singlePixelMat[:,:,:] # [caps, y1:y2, x1:x2]
+print("There are {} foreground images.".format(numFgImages))
+
+for fIdx in range(numFgImages):
+    payload = load_func(fgImageFile);
+    #if (fIdx < 4):
+    #    continue
+    curr_frame = payload[4].reshape([image_height,image_width]);
+    fmbImg = curr_frame - backStack[(payload[3]-1)%num_caps,:,:];
+
+    curr_asic = fmbImg[asic_start_y:(asic_start_y+asic_height),asic_start_x:(asic_start_x+asic_width)] # Just get the ASIC of interest
+
+    num_asic_pixels = asic_width * asic_height; # Base pixels in an ASIC
+    curr_slice = curr_asic.reshape([num_asic_pixels])
+    curr_slice.sort()           # Sort to get the pixels ready for quartiles
+    stripped_slice = curr_slice[trim_pixels:(num_asic_pixels-1-trim_pixels)]
+    num_stripped_pixels = len(stripped_slice)
+
+    low_avg = stripped_slice[int(num_stripped_pixels/8)] # Middle of first quartile
+    high_avg = stripped_slice[int(num_stripped_pixels*7/8)] # Middle of fourth quartile
+
+    binRan = np.arange(math.floor(stripped_slice[0]), math.ceil(stripped_slice[-1])) # Cover the whole spread
+
+    strip_hist = np.histogram(stripped_slice, bins=binRan[:-1])[0]
+    # First peak Amplitude, mean, std; Second peak Amplitute, mean, std; offset
+    guess_val = [ strip_hist.max(), low_avg, 10, strip_hist.max(), high_avg, 10, 0]
+
+    min_2g = lse_min()
+    min_2g.x_data = binRan
+    min_2g.y_data = strip_hist
+    min_2g.min_func = twoGauss;
+
+    res = scipy.optimize.minimize(do_lse_real, np.array(guess_val), args=min_2g, method="Nelder-Mead",options={"adaptive":True})
+    fit_vals = res.x
+
+    fit_pixels = twoGauss(binRan[:-1], *fit_vals)
+
+    print("Means: {}\t{}".format(fit_vals[1],fit_vals[4]))
 
 
-fg_filelist = glob.glob(fgGlobPattern)
-for fgFilename in fg_filelist:
-    # Iterate over all foreground images
-    fgImageFile = open(fgFilename, "rb");
-    numFgImages = int(os.path.getsize(fgFilename)/(file_gap+image_height*image_width*sensor_bpp/2));
+    # First peak Amplitude, mean, std; Second peak Amplitute, mean, std; Third peak Amplitude, mean, std; offset
+    guess_val = [ strip_hist.max(), low_avg, 10, strip_hist.max(), (low_avg+high_avg)/2, 10, strip_hist.max(), high_avg, 10, 0]
+    #guess_val = [ strip_hist.max(), low_avg, 10, strip_hist.max(), 300, 10, strip_hist.max(), 500, 10, 0]
 
+    guess_val = [-0.1, 0, 300, -0.1, 70, 50, 0]
 
-    for fIdx in range(numFgImages):
-        payload = load_func(fgImageFile);
-        curr_frame = payload[4].reshape([image_height,image_width]);
-        fmbImg = curr_frame - backStack[(payload[3]-1)%num_caps,:,:];
+    min_3g = lse_min()
+    min_3g.x_data = binRan
+    min_3g.y_data = strip_hist
+    min_3g.min_func = twoClipQuad;
 
-        pixelExtractor.extract_frame(fmbImg, (payload[3]-1)%num_caps); # FIXME Assumes that all caps are being used in the foreground image
-        
-    # Close the file
-    fgImageFile.close();
+    #res = scipy.optimize.minimize(do_lse_real, np.array(guess_val), args=min_3g, method="Nelder-Mead",options={"adaptive":True})
+    #fit_vals3 = res.x
 
-# Now get some valid pixels
-valid_pixels = [];
-for cap_idx in range(num_caps):
-    valid_pixels.append(np.array(pixelExtractor.valid_values[cap_idx]).astype(np.double))
+    #fit_pixels3 = twoClipQuad(binRan[:-1], *fit_vals3)
 
-# Clip the arrays
-clipped_pixels = [];
-for cap_idx in range(num_caps):
-    clipped_pixels.append(clip_hist(valid_pixels[cap_idx], clip_thresh));
+    
+    fig,ax = plt.subplots(1,1)
+
+    ax.hist(stripped_slice, bins=binRan)
+    ax.plot(binRan[:-1], fit_pixels, 'r--')
+    #ax.plot(binRan[:-1], fit_pixels3, 'v--')
+    plt.show()
+                           
+        # Close the file
+fgImageFile.close();
+
+sys.exit(1)
 
 # Now histogram the arrays
 hist_pixels = [];
@@ -208,7 +276,7 @@ for cap_idx in range(CAP_LIMIT):
 #     guess_val[3] = guess_val[0]*0.9;
     
     # Three Gauss
-    guess_val = [1, 0, 10, 0.9, 30, 10, 0.5, 60, 10, 0]
+    guess_val = [1, 0, 10, 0.9, 50, 10, 0.5, 100, 10, 0]
     guess_val[0] = np.max(hist_pixels)
     guess_val[3] = guess_val[0]*0.9
     guess_val[6] = guess_val[0]*0.5;
@@ -216,7 +284,7 @@ for cap_idx in range(CAP_LIMIT):
     guess_array[0] = guess_val
 
     #     # Four Gauss
-    guess_val = [1, 0, 10, 0.9, 30, 10, 0.5, 60, 10, 0.2, 90, 10, 0]
+    guess_val = [1, 0, 10, 0.9, 100, 10, 0.5, 200, 10, 0.2, 300, 10, 0]
     guess_val[0] = np.max(hist_pixels)
     guess_val[3] = guess_val[0]*0.9
     guess_val[6] = guess_val[0]*0.5
@@ -225,7 +293,7 @@ for cap_idx in range(CAP_LIMIT):
     guess_array[1] = guess_val
 
     #     # Five Gauss
-    guess_val = [1, 0, 10, 0.9, 30, 10, 0.5, 60, 10, 0.2, 90, 10, 0.1, 120, 10, 0]
+    guess_val = [1, 0, 10, 0.9, 100, 10, 0.5, 200, 10, 0.2, 300, 10, 0.1, 400, 10, 0]
     guess_val[0] = np.max(hist_pixels)
     guess_val[3] = guess_val[0]*0.9
     guess_val[6] = guess_val[0]*0.5
@@ -244,9 +312,17 @@ for cap_idx in range(CAP_LIMIT):
 
     # Three Gauss
     if b_three_peak:
-        fit_vals = curve_fit(threeGauss, binRan[:-1], hist_pixels[cap_idx], guess_array[0], method='dogbox', max_nfev=fit_max_eval);
-        fit_pixels[0].append(threeGauss(binRan[:-1], *fit_vals[0]));
-        fit_params[0].append(fit_vals[0])
+        min3g = lse_min();
+        min3g.x_data = binRan[:-1];
+        min3g.y_data = hist_pixels[cap_idx];
+        min3g.min_func = threeGauss;
+        
+        res = scipy.optimize.minimize(do_lse_real, np.array(guess_array[0]), args=min3g, method="Nelder-Mead",options={"adaptive":True});
+        
+        fit_vals = res.x
+        print(res.x)
+        fit_pixels[0].append(threeGauss(binRan[:-1], *fit_vals));
+        fit_params[0].append(fit_vals)
         mean_index = [1, 4, 7]
         sigma_index = [2, 5, 8]
     

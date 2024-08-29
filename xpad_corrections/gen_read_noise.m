@@ -1,27 +1,59 @@
 clear
 
-asic_width = 128;
-asic_height = 128;
-img_width = 512;
-img_height = 512;
-num_caps = 8;                   # Camera Parameters
-num_skip_images = 0;             # The number of images at the start to skip
-num_skip_frames = num_caps * num_skip_images; # Total frames to skip
-offset = 256;                   # Header size
-gap=1024;                       # Gap between rasters
-y_margin = 3;
-x_margin = 3;                   #Pixels at each edge to ignore
+cfg_filename = 'read_noise.ini';
+cfg_file = fopen(cfg_filename);
+[cfg_list, file_status] = get_config_line(cfg_file);
+fclose(cfg_file);
 
-asic_x_count = img_width/asic_width;
-asic_y_count = img_height/asic_height;
+for cfg_idx = 1:size(cfg_list)(1)
+  curr_name = strtrim(cfg_list{cfg_idx, 1}{1,1});
+  curr_val = strtrim(cfg_list{cfg_idx, 2}{1,1});
+
+  if strcmp(curr_name, "asic_width")
+    asic_width = str2double(curr_val);
+  elseif strcmp(curr_name, "asic_height")
+    asic_height = str2double(curr_val);
+  elseif strcmp(curr_name, "img_width")
+    image_width = str2double(curr_val);
+  elseif strcmp(curr_name, "img_height")
+    image_height = str2double(curr_val);
+  elseif strcmp(curr_name, "num_caps")
+    num_caps = str2double(curr_val);
+  elseif strcmp(curr_name, "file_offset")
+    offset = str2double(curr_val);
+  elseif strcmp(curr_name, "file_gap")
+    gap = str2double(curr_val);
+  elseif strcmp(curr_name, "num_skip_images")
+    num_skip_images = str2double(curr_val);
+  elseif strcmp(curr_name, "gain_threshold")
+    gain_thresh = str2double(curr_val);
+  elseif strcmp(curr_name, "dark_slope_thresh")
+    bad_thresh = str2num(curr_val);
+  elseif strcmp(curr_name, "x_margin")
+    x_margin = str2double(curr_val);
+  elseif strcmp(curr_name, "y_margin")
+    y_margin = str2double(curr_val);
+  elseif strcmp(curr_name, "dark_image_filename")
+    dark_image_filename = curr_val;
+  elseif strcmp(curr_name, "dark_mask")
+    dark_mask_filename = curr_val;
+  elseif strcmp(curr_name, "hot_mask")
+    hot_mask_filename = curr_val;
+  elseif strcmp(curr_name, "bpp")
+    sensor_bpp = str2double(curr_val);
+  elseif strcmp(curr_name, "asics_in_use")
+    asics_in_use = str2num(curr_val);
+  endif
+endfor
+
+num_skip_frames = num_caps * num_skip_images; # Total frames to skip
+
+asic_x_count = image_width/asic_width;
+asic_y_count = image_height/asic_height;
 asic_count = asic_x_count * asic_y_count;
 
-bad_thresh = [1.5 1.806 1.955 2.2687 2.3881];
-
-dark_image_filename = 'keck_test/dark_last2.raw'; # The image of all dark frames
-dark_image_filename = 'keck_test/dark_combined.raw';
 ## Load in the whole stack
-[raw_dark, num_frames] = read_xpad_image(dark_image_filename, 16, offset, gap, 512, 512);
+[raw_dark, num_frames] = read_xpad_image(dark_image_filename, sensor_bpp, offset, gap, image_width, image_height);
 
 printf("Total dark frames: %i\n", num_frames);
 
@@ -37,8 +69,8 @@ diff_stack = raw_dark(:,:,stack_two_idx) - raw_dark(:,:,stack_one_idx);
 
 ## We now need to NaN out the bad pixels.  These are contained in two PGM files
 ## Change the filenames here to suit.
-bad_dark_pixels = imread("dark_pixels.pgm");
-bad_hot_pixels = imread("hot_pixels.pgm");
+bad_dark_pixels = imread(dark_mask_filename);
+bad_hot_pixels = imread(hot_mask_filename);
 disp('Loaded bad pixel maps')
 bad_pixels = bad_dark_pixels+bad_hot_pixels;
 bad_pixel_loc = find(bad_pixels != 0);
@@ -62,6 +94,7 @@ separate_cap_noise = zeros(asic_count, num_caps);
 asic_idx = 0;
 
 printf("Frames Per Cap: %i\n", (num_frames/2/num_caps));
+
 for cap_idx = 1:num_caps
   asic_idx = 0;
   cap_lower = cap_idx;
@@ -94,44 +127,60 @@ endfor
 
 full_noise = mean(raw_cap_noise,2);
 
+
+csv_file = fopen("read_noise.csv", "w");
+
 printf("Total Noise:\n")
-disp([raw_cap_noise(7:8,:) mean(raw_cap_noise(7:8,:),2)])
-
-printf("Per-Frame Noise:\n")
-disp([separate_cap_noise(7:8,:) mean(separate_cap_noise(7:8,:),2)])
-
-
-figure(1)
-subplot(2,1,1)
-plot(1:8,raw_cap_noise(7,:),'-b*;ASIC 7;', 1:8, raw_cap_noise(8,:),'-r^;ASIC 8;');
-title("Total Noise")
-xlabel("Cap Number")
-ylabel("Noise (ADU)")
-subplot(2,1,2)
-plot(1:8,separate_cap_noise(7,:),'-b*;ASIC 7;', 1:8, separate_cap_noise(8,:),'-r^;ASIC 8;');
-title('Per-Frame Noise')
-xlabel("Cap Number")
-ylabel("Noise (ADU)")
-
-print read_noise.png
-
-figure(2)
-frames_per_cap = num_frames/2/num_caps;
-a7_mean = zeros(num_caps, frames_per_cap);
+## Fancy Printing w00t!eleventy!!1!
+printf("        Cap\n");
+printf("ASIC    ");
+fprintf(csv_file, "Total Noise:\n");
+fprintf(csv_file, ",Cap\n");
+fprintf(csv_file, "ASIC");
 for cap_idx=1:num_caps
-  cap_frames=cap_idx:num_caps:(num_frames/2);
-  cap_stack = asic_7(:,:,cap_frames);
-  for frame_idx=1:frames_per_cap
-    curr_slice = cap_stack(:,:,frame_idx);
-    a7_mean(cap_idx, frame_idx) = mean(reshape(curr_slice, 1, []));
+  printf("%-8i", cap_idx);
+  fprintf(csv_file, ",%i", cap_idx);
+endfor
+printf("\n")
+fprintf(csv_file, "\n")
+
+for asic_idx=asics_in_use
+  printf("%4i    ", asic_idx)
+  fprintf(csv_file, "%i", asic_idx)
+  for cap_idx=1:num_caps
+    printf("%-6.3f  ", raw_cap_noise(asic_idx, cap_idx))
+    fprintf(csv_file, ",%6.3f",raw_cap_noise(asic_idx, cap_idx));
   endfor
+  printf("\n")
+  fprintf(csv_file, "\n")
 endfor
 
-plot(1:frames_per_cap, a7_mean(1,:), '-b*;Cap 1;', 1:frames_per_cap, a7_mean(7,:), '-r^;Cap 6;')
-title("Mean of ASIC 7 Difference Images")
-xlabel("Frame within Cap")
-ylabel("Mean Value (ADU)")
-print image_mean.png
+printf("\n")
+fprintf(csv_file, "\n")
 
-printf("ASIC 7 Frame Averages Caps 1 and 6")
-disp([a7_mean(1:6:7,:) mean(a7_mean(1:6:7,:),2)])
+printf("Per-Frame Noise:\n")
+printf("        Cap\n");
+printf("ASIC    ");
+fprintf(csv_file, "Per-Frame Noise:\n");
+fprintf(csv_file, ",Cap\n");
+fprintf(csv_file, "ASIC");
+for cap_idx=1:num_caps
+  printf("%-8i", cap_idx);
+  fprintf(csv_file, ",%i", cap_idx);
+endfor
+
+printf("\n")
+fprintf(csv_file, "\n")
+
+for asic_idx=asics_in_use
+  printf("%4i    ", asic_idx)
+  fprintf(csv_file, "%i", asic_idx)
+  for cap_idx=1:num_caps
+    printf("%-6.3f  ", separate_cap_noise(asic_idx, cap_idx))
+    fprintf(csv_file, ",%6.3f",separate_cap_noise(asic_idx, cap_idx));
+  endfor
+  printf("\n")
+  fprintf(csv_file, "\n")
+endfor
+
+fclose(csv_file);
