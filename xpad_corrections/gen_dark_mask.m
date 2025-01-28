@@ -217,3 +217,5 @@ cold_total = sum(cold_img, 3);
 ## The pgm_write function is needed to convert NaNs and format the output properly
 pgm_write(cold_total, "dark_pixels.pgm");
 #pgm_write(hot_total, "hot_pixels.pgm");
+
+pgm_write_stack(cold_img, "dark_pixels.pgm", num_caps);
