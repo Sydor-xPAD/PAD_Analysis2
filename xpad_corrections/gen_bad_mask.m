@@ -83,7 +83,7 @@ bright_image = zeros(img_height, img_width, num_caps);
 
 # Load in the the dark image and threshold
 ## Load in the whole stack
-[raw_dark, num_frames] = read_xpad_image(dark_image_filename, sensor_bpp, offset, gap, 512, 512);
+[raw_dark, num_frames] = read_xpad_image(dark_image_filename, sensor_bpp, offset, gap, img_width, img_height);
 
 ## Skip the first NUM_SKIP_IMAGE background images
 ## Remember there are NUM_CAPS frames per image
@@ -133,7 +133,7 @@ endfor
 ## Load in the the dark image and threshold
 
 ## Load in the whole stack
-[raw_bright, num_frames] = read_xpad_image(bright_image_filename, sensor_bpp, offset, gap, 512, 512);
+[raw_bright, num_frames] = read_xpad_image(bright_image_filename, sensor_bpp, offset, gap, img_width, img_height);
 
 ## Skip the first NUM_SKIP_IMAGE flatfiled images
 ## Remember there are NUM_CAPS frames per image

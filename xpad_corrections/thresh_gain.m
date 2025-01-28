@@ -8,7 +8,7 @@ function [mod_img, filt_prop] = thresh_gain(base_img, thresh, asic_width, asic_h
 
   filt_prop = [];
   for cap_idx = 1:num_caps
-    for row_idx = 1:num_x_asic
+    for row_idx = 1:num_y_asic
       y_start = (row_idx-1)*asic_height+1;
       y_end = row_idx*asic_height;
       for col_idx = 1:num_x_asic

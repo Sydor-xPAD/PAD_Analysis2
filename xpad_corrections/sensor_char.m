@@ -217,7 +217,7 @@ if do_flatness
 
   asic_mean_before = zeros(num_asics, num_caps);
   asic_std_before = zeros(num_asics, num_caps);
-  max_pairs = floor(num_bright_frames/2);
+  max_pairs = floor((num_bright_frames/num_caps)/2);
   pair_array = gen_pairs_array(max_pairs);
   fixed_noise = zeros(num_asics, num_caps);
   flat_noise = zeros(num_asics, num_caps);
@@ -259,7 +259,7 @@ if do_flatness
 
       ## Now apply the flatfield
       flattened_asic = curr_stack;
-      for frame_idx=1:num_bright_frames
+      for frame_idx=1:(num_bright_frames/num_caps)
         flattened_asic(:,:,frame_idx) = flattened_asic(:,:,frame_idx).*ff_asic;
       endfor
 
