@@ -71,7 +71,12 @@ endif
 
 raw_dark = raw_dark(:,:, (num_skip_frames+1):num_frames);
 
-dark_mean = mean(raw_dark,3);
+## Slice the image into caps
+dark_mean = zeros(image_height, image_width, num_caps);
+for cap_idx=1:num_caps
+  dark_cap = raw_dark(:,:,cap_idx:num_caps:end);
+  dark_mean(:,:,cap_idx) = mean(dark_cap, 3);
+endfor
 
 clear raw_dark
 
@@ -89,74 +94,78 @@ for bright_idx=1:numel(bright_image_filenames)
 
   raw_bright = raw_bright(:,:, (num_skip_frames+1):num_frames);
 
-  bright_mean = mean(raw_bright,3);
+  for cap_idx=1:num_caps
 
-  clear raw_bright
-
-  diff_stack = bright_mean - dark_mean;
-
-  ## We now need to NaN out the bad pixels.  These are contained in two PGM files
-  ## Change the filenames here to suit.
-  #bad_dark_pixels = imread(dark_mask_filename);
-  #bad_hot_pixels = imread(hot_mask_filename);
-  #disp('Loaded bad pixel maps')
-  #bad_pixels = bad_dark_pixels+bad_hot_pixels;
-  #bad_pixel_loc = find(bad_pixels != 0);
-  
-  ## Set all bad flat pixels to NaN
-  ## Iterate over all caps
-  #for slice_idx = 1:(num_frames/2)
-  #  curr_slice = diff_stack(:,:,slice_idx);
-  #  curr_slice(bad_pixel_loc) = NaN;
-  #  diff_stack(:,:,slice_idx) = curr_slice;
-  #endfor
-
+    bright_cap = raw_bright(:,:,cap_idx:num_caps:end);
+    bright_mean = mean(bright_cap,3);
+    
+    diff_stack = bright_mean - dark_mean;
+    
+    ## We now need to NaN out the bad pixels.  These are contained in two PGM files
+    ## Change the filenames here to suit.
+    #bad_dark_pixels = imread(dark_mask_filename);
+    #bad_hot_pixels = imread(hot_mask_filename);
+    #disp('Loaded bad pixel maps')
+    #bad_pixels = bad_dark_pixels+bad_hot_pixels;
+    #bad_pixel_loc = find(bad_pixels != 0);
+    
+    ## Set all bad flat pixels to NaN
+    ## Iterate over all caps
+    #for slice_idx = 1:(num_frames/2)
+    #  curr_slice = diff_stack(:,:,slice_idx);
+    #  curr_slice(bad_pixel_loc) = NaN;
+    #  diff_stack(:,:,slice_idx) = curr_slice;
+    #endfor
+    
               #diff_file = fopen("read_noise_diff.raw", "wb");
               #fwrite(diff_file, reshape(diff_stack,1,[]), "float64");
               #fclose(diff_file);
-
-
-  ## Compute a standard deviation for each ASIC
-  raw_mean = zeros(asic_count, 1);
-  separate_mean = zeros(asic_count,1);
-  asic_idx = 0;
-
-  for row_idx=1:asic_y_count
-    row_lower = (row_idx-1)*asic_height+1;
-    row_upper = row_lower+asic_height - 1;
-    row_lower = row_lower + y_margin;
-    row_upper = row_upper - y_margin;
     
-    for col_idx=1:asic_x_count
-      col_lower = (col_idx-1)*asic_width+1;
-      col_upper = col_lower+asic_width - 1;
-      col_lower = col_lower + x_margin;
-      col_upper = col_upper - x_margin;
+    
+    ## Compute a standard deviation for each ASIC
+    raw_mean = zeros(asic_count, 1);
+    separate_mean = zeros(asic_count,1);
+    asic_idx = 0;
+    
+    for row_idx=1:asic_y_count
+      row_lower = (row_idx-1)*asic_height+1;
+      row_upper = row_lower+asic_height - 1;
+      row_lower = row_lower + y_margin;
+      row_upper = row_upper - y_margin;
       
-      asic_idx = asic_idx + 1;
-
-      curr_asic = diff_stack(row_lower:row_upper, col_lower:col_upper);
-      
-      darkcurrent_array(bright_idx, asic_idx) = mean(reshape(curr_asic, 1, []));
+      for col_idx=1:asic_x_count
+        col_lower = (col_idx-1)*asic_width+1;
+        col_upper = col_lower+asic_width - 1;
+        col_lower = col_lower + x_margin;
+        col_upper = col_upper - x_margin;
+        
+        asic_idx = asic_idx + 1;
+        
+        curr_asic = diff_stack(row_lower:row_upper, col_lower:col_upper);
+        
+        darkcurrent_array(bright_idx, asic_idx, cap_idx) = mean(reshape(curr_asic, 1, []));
+      endfor
     endfor
   endfor
 endfor
 
-csv_file = fopen("dark_current.csv", "w");
-out_matrix = [elapsed_time darkcurrent_array]';  # Make columns for output via single dimension
-for out_idx=1:numel(out_matrix)
-  fprintf(csv_file, "%12.9f",out_matrix(out_idx));
-  if mod(out_idx, asic_count+1)==0
-    fprintf(csv_file, "\n");
-  endif
-endfor
-fclose(csv_file);
+#csv_file = fopen("dark_current.csv", "w");
+#out_matrix = [elapsed_time darkcurrent_array]';  # Make columns for output via single dimension
+#for out_idx=1:numel(out_matrix)
+#  fprintf(csv_file, "%12.9f",out_matrix(out_idx));
+#  if mod(out_idx, asic_count+1)==0
+#    fprintf(csv_file, "\n");
+#  endif
+#endfor
+#fclose(csv_file);
 
 ## Now do the linear regression
-regression_coeff = zeros(asic_count, 2);
+regression_coeff = zeros(asic_count, 2,num_caps);
 
-for asic_idx=1:asic_count
-  regression_coeff(asic_idx,:) = polyfit(elapsed_time, darkcurrent_array(:,asic_idx), 1);
+for cap_idx=1:num_caps
+  for asic_idx=1:asic_count
+    regression_coeff(asic_idx,:,cap_idx) = polyfit(elapsed_time, darkcurrent_array(:,asic_idx,cap_idx), 1);
+  endfor
 endfor
 
 
