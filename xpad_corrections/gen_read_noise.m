@@ -61,6 +61,8 @@ if mod(num_frames, num_caps) != 0
   error("Error: Frame count is not a multiple of number of caps.");
 endif
 
+raw_dark = raw_dark(:,:,(num_skip_frames+1):end);
+num_frames = num_frames-num_skip_frames;
 
 ## Subtract the stacks
 stack_one_idx = 1:(num_frames/2);
@@ -75,13 +77,14 @@ disp('Loaded bad pixel maps')
 bad_pixels = bad_dark_pixels+bad_hot_pixels;
 bad_pixel_loc = find(bad_pixels != 0);
 
+                            #TODO Restore the bad-pixel functions
 ## Set all bad flat pixels to NaN
 ## Iterate over all caps
-for slice_idx = 1:(num_frames/2)
-  curr_slice = diff_stack(:,:,slice_idx);
-  curr_slice(bad_pixel_loc) = NaN;
-  diff_stack(:,:,slice_idx) = curr_slice;
-endfor
+#for slice_idx = 1:(num_frames/2)
+#  curr_slice = diff_stack(:,:,slice_idx);
+#  curr_slice(bad_pixel_loc) = NaN;
+#  diff_stack(:,:,slice_idx) = curr_slice;
+#endfor
 
 diff_file = fopen("read_noise_diff.raw", "wb");
 fwrite(diff_file, reshape(diff_stack,1,[]), "float64");
