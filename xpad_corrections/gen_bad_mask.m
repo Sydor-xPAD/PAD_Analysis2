@@ -60,7 +60,7 @@ num_skip_frames = num_skip_images * num_caps;
 
 ## Compute the actual IQR-thresholds from the z-score thresholds
 hot_iqr_thresh = (hot_z_thresh-0.67)/1.34;
-dark_iqr_thresh = (dark_z_thresh-0.67)/1.34
+dark_iqr_thresh = (dark_z_thresh-0.67)/1.34;
 
 ## Load in the preliminary bad pixels
 prelim_bad_mask = imread(prelim_bad_filename);
@@ -119,6 +119,8 @@ size(dark_image)
 ## Threshold out the hot pixels
 ## The threshold is the third argument in thresh_image(), below.
 hot_filt = [];
+total_bad = [];
+masked_total_bad = [];
 for curr_thresh=hot_iqr_thresh
   [hot_img, pix_thresh] = thresh_image(dark_image, 0, curr_thresh, asic_width, asic_height);
   hot_filt = [hot_filt pix_thresh];
@@ -126,6 +128,15 @@ for curr_thresh=hot_iqr_thresh
   hot_total = sum(hot_img, 3);
   out_name = sprintf("hot_iqr_%.4f.pgm", 1.34*curr_thresh+0.67); #Switch to Z
   pgm_write(hot_total, out_name);
+  out_name = sprintf("hot_iqr_%.4f_stack.pgm", 1.34*curr_thresh+0.67);
+  pgm_write_stack(hot_img, out_name, num_caps);
+  masked_hot_total = hot_total;
+  masked_hot_total(:,128:129) = 0;
+  masked_hot_total(:,384:385) = 0;
+  masked_hot_total(:,640:641) = 0;
+  masked_hot_total(:,896:897) = 0;
+  total_bad = [total_bad sum(reshape(isnan(hot_total),1,[]))];
+  masked_total_bad = [masked_total_bad sum(reshape(isnan(masked_hot_total),1,[]))];
 endfor
 
 ## Now do similar to find the dark pixels
@@ -189,3 +200,5 @@ pgm_write(hot_total, "hot_pixels.pgm");
 
 pgm_write_stack(hot_img, "hot_pixels.pgm", num_caps);
 pgm_write_stack(cold_img, "dark_pixels.pgm", num_caps);
+
+[hot_z_thresh' total_bad' masked_total_bad']
