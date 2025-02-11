@@ -82,42 +82,34 @@ endif
 ## Note where preliminary bad pixels are set
 prelim_bad_mask = prelim_bad_mask != 0;
 
-## Load data for the hot mask
-read_noise_img = read_xpad_image(readnoise_image_filename, sensor_bpp, offset, gap, img_width, img_height);
-
-read_noise_img = read_noise_img(:,:,(num_skip_frames+1):end);
-read_noise_caps = per_cap_average(read_noise_img, num_caps);
-clear read_noise_img;
-
-dark_image = zeros(img_height, img_width, num_caps);
-bright_image = zeros(img_height, img_width, num_caps);
-
-# Load in the the dark image and threshold
-## Load in the whole stack
+## Load in the the dark image
+## Load in the whole stack...
 [raw_dark, num_frames] = read_xpad_image(dark_image_filename, sensor_bpp, offset, gap, img_width, img_height);
-
-# Skip the specified frames
-raw_dark = raw_dark(:,:,(num_skip_frames+1):end);
-num_frames = num_frames-num_skip_frames;
-
-# Average per-cap
-dark_image = per_cap_average(raw_dark, num_caps);
-
-
+## ...and process
+[dark_img, num_frames] = clip_avg_stack(raw_dark, num_skip_frames, num_caps);
 clear raw_dark
+
+## Load in the hot image
+## Load in the whole stack...
+[raw_bright, num_frames] = read_xpad_image(bright_image_filename, sensor_bpp, offset, gap, img_width, img_height);
+## ...and process
+[bright_img, num_frames] = clip_avg_stack(raw_bright, num_skip_frames, num_caps);
+clear raw_bright
+
 
 ## NaN out all bad pixels identified in pixel map
 for cap_idx = 1:num_caps
   curr_slice = dark_image(:,:,cap_idx);
   curr_slice(find(prelim_bad_mask)) = NaN;
   dark_image(:,:,cap_idx) = curr_slice;
-  curr_slice = read_noise_caps(:,:,cap_idx);
+  curr_slice = bright_image(:,:,cap_idx);
   curr_slice(find(prelim_bad_mask)) = NaN;
-  read_noise_caps(:,:,cap_idx) = curr_slice;
+  bright_image(:,:,cap_idx) = curr_slice;
 endfor
 
 ## Now NaN out the bad asics
 dark_image = apply_bad_asic(bad_asics, asic_height, asic_width, dark_image);
+bright_image = apply_bad_asic(bad_asics, asic_height, asic_width, bright_image);
 
 ## Kludge for single caps
 if num_caps == 1
@@ -127,14 +119,22 @@ if num_caps == 1
   dark_image = temp_image;
 endif
 
+## Diff the images
+diff_image = bright_image - dark_image;
+
 size(dark_image)
 ## Threshold out the hot pixels
+for curr_thresh=hot_iqr_thresh
+  [hot_img, pix_thresh] = thresh_image(
+
 ## The threshold is the third argument in thresh_image(), below.
 hot_filt = [];
 total_bad = [];
 masked_total_bad = [];
+hot_bad = [];
+cold_bad = [];
 for curr_thresh=hot_iqr_thresh
-  [hot_img, pix_thresh] = thresh_image(read_noise_caps, 0, curr_thresh, asic_width, asic_height);
+  [hot_img, pix_thresh] = thresh_image(diff_image, 0, curr_thresh, asic_width, asic_height);
   hot_filt = [hot_filt pix_thresh];
 
   hot_total = sum(hot_img, 3);
@@ -142,62 +142,24 @@ for curr_thresh=hot_iqr_thresh
   pgm_write(hot_total, out_name);
   out_name = sprintf("hot_iqr_%.4f_stack.pgm", 1.34*curr_thresh+0.67);
   pgm_write_stack(hot_img, out_name, num_caps);
-  masked_hot_total = hot_total;
-  masked_hot_total(:,128:129) = 0;
-  masked_hot_total(:,384:385) = 0;
-  masked_hot_total(:,640:641) = 0;
-  masked_hot_total(:,896:897) = 0;
-  total_bad = [total_bad sum(reshape(isnan(hot_total),1,[]))];
-  masked_total_bad = [masked_total_bad sum(reshape(isnan(masked_hot_total),1,[]))];
+  hot_bad = [hot_bad sum(reshape(isnan(hot_total),1,[]))];
 endfor
 
 ## Now do similar to find the dark pixels
-
-## Load in the the hot image and threshold
-
-## Load in the whole stack
-[raw_bright, num_frames] = read_xpad_image(bright_image_filename, sensor_bpp, offset, gap, img_width, img_height);
-
-## Skip the first NUM_SKIP_IMAGE flatfiled images
-## Remember there are NUM_CAPS frames per image
-raw_bright = raw_bright(:,:,(num_skip_frames+1):num_frames);
-num_frames = num_frames-num_skip_frames;
-
-## Then average over each cap
-for cap_idx = 1:num_caps
-  bright_image(:,:,cap_idx) = mean(raw_bright(:,:,cap_idx:num_caps:num_frames),3);
-endfor
-
-clear raw_bright
-
-## NaN out all bad pixels identified in pixel map
-for cap_idx = 1:num_caps
-  curr_slice = bright_image(:,:,cap_idx);
-  curr_slice(find(prelim_bad_mask)) = NaN;
-  bright_image(:,:,cap_idx) = curr_slice;
-endfor
-
-## Now NaN out the bad asics
-bright_image = apply_bad_asic(bad_asics, asic_height, asic_width, bright_image);
-
-## Kludge for 1 cap
-if num_caps == 1
-  temp_image = zeros([size(bright_image) 2]);
-  temp_image(:,:,1) = bright_image;
-  temp_image(:,:,2) = bright_image;
-  bright_image = temp_image;
-endif
 
 ## Threshold out the hot pixels
 ## The threshold is the third argument in thresh_image(), below.
 cold_filt = [];
 for curr_thresh=dark_iqr_thresh
-  [cold_img, curr_filt] = thresh_image(bright_image, 1, curr_thresh, asic_width, asic_height);
+  [cold_img, curr_filt] = thresh_image(diff_image, 1, curr_thresh, asic_width, asic_height);
   cold_filt = [cold_filt curr_filt];
 
   cold_total = sum(cold_img, 3);
   out_name = sprintf("dark_iqr_%.4f.pgm", 1.34*curr_thresh+0.67);
   pgm_write(cold_total, out_name);
+  out_name = sprintf("dark_iqr_%.4f_stack.pgm", 1.34*curr_thresh+0.67);
+  pgm_write_stack(cold_img, out_name, num_caps);
+  cold_bad = [cold_bad sum(reshape(isnan(cold_total),1,[]))];
 endfor
 
 ## With the bad pixels calculated, we can collapse them to single layers for writing out
@@ -213,4 +175,5 @@ pgm_write(hot_total, "hot_pixels.pgm");
 pgm_write_stack(hot_img, "hot_pixels.pgm", num_caps);
 pgm_write_stack(cold_img, "dark_pixels.pgm", num_caps);
 
-[hot_z_thresh' total_bad' masked_total_bad']
+hot_bad
+cold_bad
