@@ -56,17 +56,30 @@ asic_count = asic_x_count * asic_y_count;
 [raw_dark, num_frames] = read_xpad_image(dark_image_filename, sensor_bpp, offset, gap, image_width, image_height);
 
 printf("Total dark frames: %i\n", num_frames);
+printf("Skippking %i frames\n", num_skip_frames);
 
 if mod(num_frames, num_caps) != 0
   error("Error: Frame count is not a multiple of number of caps.");
 endif
 
 raw_dark = raw_dark(:,:,(num_skip_frames+1):end);
-num_frames = num_frames-num_skip_frames;
+num_frames = num_frames-num_skip_frames
+
+## If there is an odd number of frames per cap, drop the last one
+cap_frames = num_frames/num_caps
+if mod(cap_frames, 2) != 0
+  disp('Dropping last set')
+  raw_dark = raw_dark(:,:,1:(num_frames-num_caps));
+  num_frames = num_frames-num_caps;
+  cap_frames = num_frames/num_caps;
+endif
+div_idx = cap_frames/2;
 
 ## Subtract the stacks
-stack_one_idx = 1:(num_frames/2);
-stack_two_idx = (num_frames/2+1):(num_frames);
+stack_one_idx = 1:(div_idx*num_caps);
+stack_two_idx = (div_idx*num_caps+1):(num_frames);
+size(stack_one_idx)
+size(stack_two_idx)
 diff_stack = raw_dark(:,:,stack_two_idx) - raw_dark(:,:,stack_one_idx);
 
 ## We now need to NaN out the bad pixels.  These are contained in two PGM files
@@ -91,17 +104,23 @@ fwrite(diff_file, reshape(diff_stack,1,[]), "float64");
 fclose(diff_file);
 
 
-             # Compute a standard deviation for each ASIC for each cap
+## Compute a standard deviation for each ASIC for each cap
 raw_cap_noise = zeros(asic_count, num_caps);
 separate_cap_noise = zeros(asic_count, num_caps);
+## Also compute a standard deviation of mean for each ASIC for each cap
+bounce_level = zeros(asic_count, num_caps);
+
 asic_idx = 0;
 
+
 printf("Frames Per Cap: %i\n", (num_frames/2/num_caps));
+printf("Frames Per Cap: %f\n", (num_frames/2/num_caps));
 
 for cap_idx = 1:num_caps
   asic_idx = 0;
   cap_lower = cap_idx;
   cap_range = cap_lower:num_caps:(num_frames/2);
+  size(cap_range)
   for row_idx=1:asic_y_count
     row_lower = (row_idx-1)*asic_height+1;
     row_upper = row_lower+asic_height - 1;
@@ -119,15 +138,52 @@ for cap_idx = 1:num_caps
       if asic_idx == 7
         asic_7 = diff_stack(row_lower:row_upper, col_lower:col_upper, :);
       endif
+      if asic_idx == 30
+	asic_30 = diff_stack(row_lower:row_upper, col_lower:col_upper, :);
+      endif
       
       curr_asic = diff_stack(row_lower:row_upper, col_lower:col_upper, cap_range);
       
-      raw_cap_noise(asic_idx, cap_idx) = calc_read_noise(curr_asic, 1);
-      separate_cap_noise(asic_idx, cap_idx) = calc_read_noise(curr_asic, 0);
+      raw_cap_noise(asic_idx, cap_idx) = calc_read_noise(curr_asic, 1)/sqrt(2);
+      separate_cap_noise(asic_idx, cap_idx) = calc_read_noise(curr_asic, 0)/sqrt(2);
+      bounce_level(asic_idx, cap_idx) = calc_bounce(curr_asic);
     endfor
   endfor
 endfor
 
+legend_colors = {"c", "m", "g", "k"};
+legend_symbols = {"v", "*"};
+
+bounce_symbols = {"s", "x"};
+
+hold off
+figure(1)
+for cap_idx=1:num_caps
+  curr_color_idx = mod(cap_idx-1, 4)+1;
+  curr_sym_idx = floor((cap_idx-1)/4)+1'
+  format_str = [legend_colors{curr_color_idx} '-' legend_symbols{curr_sym_idx}];
+  format_str = [format_str sprintf(";Noise Cap %i;",cap_idx)];
+plot((1:asic_count)-1, separate_cap_noise(:,cap_idx), format_str)
+  hold on
+endfor
+
+for cap_idx=1:num_caps
+  curr_color_idx = mod(cap_idx-1, 4)+1;
+  curr_sym_idx = floor((cap_idx-1)/4)+1'
+  format_str = [legend_colors{curr_color_idx} '-' bounce_symbols{curr_sym_idx}];
+  format_str = [format_str sprintf(";Bounce Cap %i;",cap_idx)];
+plot((1:asic_count)-1, bounce_level(:,cap_idx), format_str)
+endfor
+
+
+axis([0 45])
+title("Read Noise and Bounce")
+xlabel("ASIC Index")
+ylabel("Level (ADU)")
+legend show
+
+print("readnoise_bounce.png")
+    
 full_noise = mean(raw_cap_noise,2);
 
 

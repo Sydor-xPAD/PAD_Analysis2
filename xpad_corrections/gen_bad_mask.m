@@ -17,6 +17,7 @@ dark_z_thresh = []
 prelim_bad_filename = ""
 dark_image_filename = ""
 bright_image_filename = ""
+readnoise_image_filename = ""
 
 for cfg_idx = 1:size(cfg_list)(1)
   curr_name = strtrim(cfg_list{cfg_idx, 1}{1,1});
@@ -31,7 +32,7 @@ for cfg_idx = 1:size(cfg_list)(1)
   elseif strcmp(curr_name, "img_height")
     img_height = str2double(curr_val);
   elseif strcmp(curr_name, "num_caps")
-    num_caps = str2double(curr_val);
+    num_caps = str2double(curr_val)
   elseif strcmp(curr_name, "file_offset")
     offset = str2double(curr_val);
   elseif strcmp(curr_name, "file_gap")
@@ -85,7 +86,7 @@ prelim_bad_mask = prelim_bad_mask != 0;
 read_noise_img = read_xpad_image(readnoise_image_filename, sensor_bpp, offset, gap, img_width, img_height);
 
 read_noise_img = read_noise_img(:,:,(num_skip_frames+1):end);
-read_noise_caps = per_cap_average(read_num_img, num_caps);
+read_noise_caps = per_cap_average(read_noise_img, num_caps);
 clear read_noise_img;
 
 dark_image = zeros(img_height, img_width, num_caps);

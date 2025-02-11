@@ -47,6 +47,8 @@ for cfg_idx = 1:size(cfg_list)(1)
     asics_in_use = str2num(curr_val);
   elseif strcmp(curr_name, "exp_time")
     exp_times = str2num(curr_val);
+  elseif strcmp(curr_name, "temperature")
+    temperature = str2num(curr_val);
   endif
 endfor
 
@@ -57,8 +59,9 @@ asic_y_count = image_height/asic_height;
 asic_count = asic_x_count * asic_y_count;
 
 darkcurrent_array = zeros(numel(exp_times)-1, asic_count, num_caps);
+darkcurrent_med = zeros(numel(exp_times)-1, asic_count, num_caps);
 elapsed_time = (exp_times(2:end)-exp_times(1))';
-
+image_means = zeros(numel(elapsed_time), asic_count*num_caps); #Stores the means rearranged for a later plot
 
 ## Load in the whole stack
 [raw_dark, num_frames] = read_xpad_image(dark_image_filename, sensor_bpp, offset, gap, image_width, image_height);
@@ -99,7 +102,7 @@ for bright_idx=1:numel(bright_image_filenames)
     bright_cap = raw_bright(:,:,cap_idx:num_caps:end);
     bright_mean = mean(bright_cap,3);
     
-    diff_stack = bright_mean - dark_mean;
+    diff_stack = bright_mean - dark_mean(:,:,cap_idx);
     
     ## We now need to NaN out the bad pixels.  These are contained in two PGM files
     ## Change the filenames here to suit.
@@ -144,9 +147,15 @@ for bright_idx=1:numel(bright_image_filenames)
         curr_asic = diff_stack(row_lower:row_upper, col_lower:col_upper);
         
         darkcurrent_array(bright_idx, asic_idx, cap_idx) = mean(reshape(curr_asic, 1, []));
+	darkcurrent_med(bright_idx, asic_idx, cap_idx) = median(reshape(curr_asic, 1, []));
       endfor
     endfor
   endfor
+endfor
+
+for time_idx=1:numel(elapsed_time)
+  image_means(time_idx, :) = reshape(darkcurrent_array(time_idx,:,:),1,[]);
+  image_meds(time_idx, :) = reshape(darkcurrent_array(time_idx,:,:),1,[]);
 endfor
 
 #csv_file = fopen("dark_current.csv", "w");
@@ -167,6 +176,37 @@ for cap_idx=1:num_caps
     regression_coeff(asic_idx,:,cap_idx) = polyfit(elapsed_time, darkcurrent_array(:,asic_idx,cap_idx), 1);
   endfor
 endfor
+
+mean_array = mean(image_means,2);
+median_array = median(image_means,2);
+min_array = min(image_means,[],2);
+max_array = max(image_means,[],2);
+med_med = median(image_meds,2);
+
+## Now do a line fit on the average curve, for suitably long exposure times
+clip_time = elapsed_time(1:end);
+clip_mean = mean_array(1:end);
+mean_fit = polyfit(clip_time,clip_mean, 1)
+
+clip_time_expanded = logspace(log(clip_time(1))/log(10),log(clip_time(end))/log(10),101);
+full_line = mean_fit(1)*clip_time_expanded+mean_fit(2);
+
+figure(1)
+hold off
+semilogx(elapsed_time, mean_array, 'b*', elapsed_time, min_array, 'g^', elapsed_time, max_array, 'rv', clip_time_expanded, full_line, 'c-');
+title_str=sprintf("Dark Current at %iC", temperature);
+title(title_str)
+xlabel("Exposure Time (s)")
+ylabel("ASIC Mean (ADU)")
+legend("Mean IDark", "Min IDark", "Max IDark", "Best-fit"); 
+
+file_str=sprintf("dark_current_%iC.png", temperature);
+print(file_str);
+
+logfile = sprintf("darkcurrent_log_%i.csv", temperature);
+dlmwrite(logfile, [elapsed_time median_array], "delimiter", ",", "precision", 2);
+
+full_regression = polyfit(elapsed_time(1:end),median_array(1:end),1)
 
 
 #
