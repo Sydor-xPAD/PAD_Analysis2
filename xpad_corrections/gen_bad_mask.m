@@ -99,18 +99,19 @@ clear raw_bright
 
 ## NaN out all bad pixels identified in pixel map
 for cap_idx = 1:num_caps
-  curr_slice = dark_image(:,:,cap_idx);
+  curr_slice = dark_img(:,:,cap_idx);
   curr_slice(find(prelim_bad_mask)) = NaN;
-  dark_image(:,:,cap_idx) = curr_slice;
-  curr_slice = bright_image(:,:,cap_idx);
+  dark_img(:,:,cap_idx) = curr_slice;
+  curr_slice = bright_img(:,:,cap_idx);
   curr_slice(find(prelim_bad_mask)) = NaN;
-  bright_image(:,:,cap_idx) = curr_slice;
+  bright_img(:,:,cap_idx) = curr_slice;
 endfor
 
 ## Now NaN out the bad asics
-dark_image = apply_bad_asic(bad_asics, asic_height, asic_width, dark_image);
-bright_image = apply_bad_asic(bad_asics, asic_height, asic_width, bright_image);
-
+dark_image = apply_bad_asic(bad_asics, asic_height, asic_width, dark_img);
+bright_image = apply_bad_asic(bad_asics, asic_height, asic_width, bright_img);
+clear dark_img
+clear bright_img
 ## Kludge for single caps
 if num_caps == 1
   temp_image = zeros([size(dark_image) 2]);
@@ -122,10 +123,11 @@ endif
 ## Diff the images
 diff_image = bright_image - dark_image;
 
-size(dark_image)
-## Threshold out the hot pixels
-for curr_thresh=hot_iqr_thresh
-  [hot_img, pix_thresh] = thresh_image(
+diff_file = fopen("bad_pix_diff.img", "wb");
+for cap_idx=1:num_caps
+  fwrite(diff_file, diff_image(:,:,cap_idx)',"double",0,"l");
+endfor
+fclose(diff_file);
 
 ## The threshold is the third argument in thresh_image(), below.
 hot_filt = [];
