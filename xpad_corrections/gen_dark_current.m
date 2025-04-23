@@ -106,19 +106,19 @@ for bright_idx=1:numel(bright_image_filenames)
     
     ## We now need to NaN out the bad pixels.  These are contained in two PGM files
     ## Change the filenames here to suit.
-    #bad_dark_pixels = imread(dark_mask_filename);
-    #bad_hot_pixels = imread(hot_mask_filename);
-    #disp('Loaded bad pixel maps')
-    #bad_pixels = bad_dark_pixels+bad_hot_pixels;
-    #bad_pixel_loc = find(bad_pixels != 0);
+    bad_dark_pixels = imread(dark_mask_filename);
+    bad_hot_pixels = imread(hot_mask_filename);
+    disp('Loaded bad pixel maps')
+    bad_pixels = bad_dark_pixels+bad_hot_pixels;
+    bad_pixel_loc = find(bad_pixels != 0);
     
     ## Set all bad flat pixels to NaN
     ## Iterate over all caps
-    #for slice_idx = 1:(num_frames/2)
-    #  curr_slice = diff_stack(:,:,slice_idx);
-    #  curr_slice(bad_pixel_loc) = NaN;
-    #  diff_stack(:,:,slice_idx) = curr_slice;
-    #endfor
+    for slice_idx = 1:num_caps
+      curr_slice = diff_stack(:,:,slice_idx);
+      curr_slice(bad_pixel_loc) = NaN;
+      diff_stack(:,:,slice_idx) = curr_slice;
+    endfor
     
               #diff_file = fopen("read_noise_diff.raw", "wb");
               #fwrite(diff_file, reshape(diff_stack,1,[]), "float64");
@@ -145,9 +145,12 @@ for bright_idx=1:numel(bright_image_filenames)
         asic_idx = asic_idx + 1;
         
         curr_asic = diff_stack(row_lower:row_upper, col_lower:col_upper);
-        
-        darkcurrent_array(bright_idx, asic_idx, cap_idx) = mean(reshape(curr_asic, 1, []));
-	darkcurrent_med(bright_idx, asic_idx, cap_idx) = median(reshape(curr_asic, 1, []));
+
+        curr_asic = reshape(curr_asic, 1, []); # Make a line
+        curr_asic = curr_asic(find(isfinite(curr_asic))); # Filter out NaNs
+
+        darkcurrent_array(bright_idx, asic_idx, cap_idx) = mean(curr_asic);
+	darkcurrent_med(bright_idx, asic_idx, cap_idx) = median(curr_asic);
       endfor
     endfor
   endfor
@@ -158,15 +161,15 @@ for time_idx=1:numel(elapsed_time)
   image_meds(time_idx, :) = reshape(darkcurrent_array(time_idx,:,:),1,[]);
 endfor
 
-#csv_file = fopen("dark_current.csv", "w");
-#out_matrix = [elapsed_time darkcurrent_array]';  # Make columns for output via single dimension
-#for out_idx=1:numel(out_matrix)
-#  fprintf(csv_file, "%12.9f",out_matrix(out_idx));
-#  if mod(out_idx, asic_count+1)==0
-#    fprintf(csv_file, "\n");
-#  endif
-#endfor
-#fclose(csv_file);
+csv_file = fopen("dark_current.csv", "w");
+out_matrix = [elapsed_time darkcurrent_array]';  # Make columns for output via single dimension
+for out_idx=1:numel(out_matrix)
+  fprintf(csv_file, "%12.9f,",out_matrix(out_idx));
+  if mod(out_idx, asic_count+1)==0
+    fprintf(csv_file, "\n");
+  endif
+endfor
+fclose(csv_file);
 
 ## Now do the linear regression
 regression_coeff = zeros(asic_count, 2,num_caps);

@@ -123,8 +123,8 @@ disp('Completed background subtraction')
 
 ## We now need to NaN out the bad pixels.  These are contained in two PGM files
 ## Change the filenames here to suit.
-bad_dark_pixels = imread(dark_mask_filename);
-bad_hot_pixels = imread(hot_mask_filename);
+bad_dark_pixels = pgm_read_stack(dark_mask_filename, num_caps);
+bad_hot_pixels = pgm_read_stack(hot_mask_filename, num_caps);
 disp('Loaded bad pixel maps')
 
 ## -=-= XXX Makes no accounting for overflow of the sum, so the masks should only have values of 1
@@ -136,7 +136,8 @@ disp('Found bad pixels')
 ## Iterate over all caps
 for cap_idx = 1:num_caps
   curr_slice = bg_sub_image(:,:,cap_idx);
-  curr_slice(bad_pixel_loc) = NaN;
+  curr_bad_pixel_loc = find(bad_pixels(:,:,cap_idx) != 0);
+  curr_slice(curr_bad_pixel_loc) = NaN;
   bg_sub_image(:,:,cap_idx) = curr_slice;
   disp('Masked bad pixels for cap ')
   cap_idx
