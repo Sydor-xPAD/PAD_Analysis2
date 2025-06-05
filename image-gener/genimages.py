@@ -1,0 +1,297 @@
+import genframes
+import numpy as np
+from enum import Enum
+import struct
+
+class eXpad_Sys_Type(Enum):
+    ST_SYS_NONE = 0
+    ST_SYS_MMPAD = 1
+    ST_SYS_MEGAPAD = 2
+    ST_SYS_KECKPAD = 3
+
+class eXpad_Pixel_Type(Enum):
+    DT_UINT32 = 0              #///< 32-bit unsigned integer
+    DT_INT32 = 1                   #///< 32-bit signed integer
+    DT_UINT16 = 2                  #///< 16-bit unsigned integer
+    DT_INT16 = 3                   #///< 16-bit signed integer
+    DT_UINT8 = 4                   #///< 8-bit  unsigned integer
+    DT_INT8 = 5                    #///< 8-bit  signed integer
+    DT_UINT64 = 6                  #///< 64-bit unsigned integer
+    DT_INT64 = 7                   #///< 64-bit signed integer
+    DT_FLOAT = 8                   #///< 32-bit floating point number
+    DT_DOUBLE = 9                  #///< 64-bit floating point number
+    DT_BOOL = 10                   #///< Boolean value
+    DT_ENUM = 11                   # ///< Enumerated value
+    DT_ANY = 99                 #///< Any type (for find only)
+
+class Xpad_Frame_Header:
+    ##
+    # Initializes header parameters
+    # @param self The object pointer
+    # @param img_sensor The image sensor being used
+    # @param xpad_param Dictionary of xPad parameters
+    # @param pixel_type The type of the pixel being used
+    def __init__(self, img_sensor, xpad_param, pixel_type):
+        self.img_height = img_sensor.img_size[0]
+        self.img_width = img_sensor.img_size[1]
+        self.pixel_type = pixel_type
+        if (pixel_type == eXpad_Pixel_Type.DT_UINT32) or (pixel_type == eXpad_Pixel_Type.DT_INT32):
+            self.bpp = 4
+        elif (pixel_type == eXpad_Pixel_Type.DT_UINT16) or (pixel_type == eXpad_Pixel_Type.DT_INT16):
+            self.bpp = 2
+        else:
+            print("Unknown data type : {}".format(data_type))
+            raise TypeError
+
+        self.xpad_param = xpad_param.copy() #-=-= FIXME Do I want a shallow copy?
+        
+        self.telemetry_len = 0
+        self.data1_len = 0
+        self.data2_len = 0
+        self.data3_len = 0
+
+        self.image_bytes = self.img_height * self.img_width * self.bpp
+
+        #-=-= FIXME Assumes for now that img_width, img_height are multiples
+        # of 2 and image_bytes is a multiple of 4
+
+        self.total_bytes = xpad_param['hdr_len'] + self.image_bytes \
+            + self.telemetry_len + self.data1_len + self.data2_len \
+            + self.data3_len + xpad_param['footer_len']
+
+        row_bytes = self.img_width * self.bpp
+        total_len_int = self.total_bytes // row_bytes
+        total_len_mod = self.total_bytes % row_bytes
+        if (total_len_mod != 0): # Total length not a multiple of image row length
+            self.total_bytes = (total_len_int + 1) * row_bytes # Round up length
+
+        self.cap_count = 1        #-=-= XXX Geared for MMPAD, but may be overridden
+    ##
+    # Creates a header and footer block for an image
+    # @param self The object pointer
+    # @param time_stamp The timestamp to put in the metadata
+    # @return [header_bytes, footer_bytes]
+    def create_blocks(self, time_stamp):
+        img_blocks = []
+        hdr_bytes = b''
+
+        frame_param_bytes = \
+            struct.pack('<HHHHII', self.xpad_param['hdr_len'], self.xpad_param['id'], \
+                        self.xpad_param['version'], self.xpad_param['sys_type'].value, self.total_bytes, self.xpad_param['frame_status'])
+
+        hdr_bytes += frame_param_bytes;
+        print("Frame param bytes len: {}".format(len(frame_param_bytes)))
+
+        image_param_bytes = \
+            struct.pack('<IHHBB6x', self.image_bytes, self.img_width, self.img_height, \
+                        self.bpp, self.pixel_type.value)
+        hdr_bytes += image_param_bytes
+        print("Image param bytes len: {}".format(len(image_param_bytes)))
+
+        data_section_bytes = struct.pack('<16x')
+        hdr_bytes += data_section_bytes
+
+        metadata_bytes = struct.pack('<QI', time_stamp, time_stamp)
+        metadata_bytes += struct.pack('<28x')
+        hdr_bytes += metadata_bytes
+        print("Metadata bytes len: {}".format(len(metadata_bytes)))
+
+        cap_count_bytes = struct.pack('<B', self.cap_count)
+        cap_count_bytes = struct.pack('<B', 3)
+        hdr_bytes += cap_count_bytes
+        cap_pad_bytes = b'\0' # There is a padding byte here
+        hdr_bytes += cap_pad_bytes
+
+        post_proc_bytes = struct.pack('<42x') # 0 since no post-processing
+        hdr_bytes += post_proc_bytes
+        print("Post-proc bytes len: {}".format(len(post_proc_bytes)))
+
+        # Total length
+        # params and data sections
+        # Metadata
+        # Cap count and padding
+        # Post-processing metadata
+        # 8 bytes for timestamp
+        
+        reserved_len = self.xpad_param['hdr_len'] \
+            - (3*16) \
+            - 40 \
+            - 2 \
+            - 42 \
+            - 8                 
+        reserved_bytes = struct.pack('<{}x'.format(reserved_len))
+        hdr_bytes += reserved_bytes
+        print("Reserved bytes len: {}".format(len(reserved_bytes)))
+
+        timestamp_bytes = struct.pack('<Q', time_stamp)
+        hdr_bytes += timestamp_bytes
+        print("Timestamp bytes len: {}".format(len(timestamp_bytes)))
+
+        img_blocks.append(hdr_bytes)
+        
+        # Now assemble the footer
+        footer_pad_len = self.total_bytes - self.image_bytes - self.xpad_param['hdr_len'] - self.xpad_param['footer_len'];
+        footer_bytes = struct.pack('<{}xQ'.format(footer_pad_len), self.xpad_param['footer_seq'])
+        img_blocks.append(footer_bytes)
+
+        return img_blocks
+        
+##
+# Holds collections of Image_Frames that collectively make up an Image.
+class Camera_Image:
+    ##
+    # @param self The object pointer
+    # @param[in] img_sensor The class describing the image sensor
+    def __init__(self, img_sensor):
+        self.img_sensor = img_sensor
+
+    ##
+    # Creates a collection of frames of a given type
+    # @param self The object pointer
+    # @param[in] num_frames The number of frames to create
+    # @param[in] random_seed The base seed to use for the RNG
+    # @param[in] frame_gen_fcn The function to use for the frame generation
+    # @param[in] frame_gen_args The argument list for the frame generation function
+    def gen_frames(self, num_frames, random_seed, frame_gen_fcn, frame_gen_args):
+        self.frame_list = []    # Create a list to hold all the frames
+        self.num_frames = num_frames if num_frames > 0 else 9999
+        self.random_seed = random_seed
+
+        try:
+            for frame_idx in range(self.num_frames):
+                curr_seed = [random_seed, frame_idx] # Create a new seed
+                
+                new_frame = genframes.Image_Frame(curr_seed, self.img_sensor)
+                if frame_gen_fcn is genframes.Image_Frame.gen_flat_text_frame:
+                    frame_gen_fcn(new_frame, frame_idx, *frame_gen_args)
+                else:
+                    frame_gen_fcn(new_frame, *frame_gen_args)
+                self.frame_list.append(new_frame)
+
+        except Exception as e:       
+            print(f"Read in {frame_idx} frames. ") 
+            pass
+        
+        
+        return
+
+    ##
+    # Writes all the frames as native binary into a file
+    # @param self The object pointer
+    # @param out_file The output file object
+    def write_raster(self, out_file):
+        for curr_frame in self.frame_list:
+            #-=-= DEBUGGING
+            #print("Out frame std: {}".format(curr_frame.img_array.std()))
+            curr_array = np.array(curr_frame.img_array, np.float64)
+            curr_array.tofile(out_file)
+
+        return
+
+    ##
+    # Adds two stacks together
+    # @param self The object pointer
+    # @param second_img The image to add
+    # @return A new image with the stacks added, or raise ValueError on size mismatch
+    def add_image(self, second_img):
+        if len(self.frame_list) != len(second_img.frame_list):
+            raise ValueError
+
+        #-=-= DEBUGGING
+        #print("Adding to images of length {}".format(len(self.frame_list)))
+        
+        # Copy the current image to the new image
+        # Need to do a partial deep copy
+        # Probably need some sort of copy constructor
+        new_image = Camera_Image(self.img_sensor)
+        new_image.num_frames = self.num_frames
+        new_image.random_seed = -12345 # Set to something contrived
+        new_image.frame_list = []
+
+        # Now add each frame
+        for frame_idx in range(len(self.frame_list)):
+            new_frame = self.frame_list[frame_idx].add_frame(second_img.frame_list[frame_idx])
+            new_image.frame_list.append(new_frame)
+            #-=-= DEBUGGING
+            #print("Combined frame std: {}".format(new_frame))
+
+        return new_image
+
+    ##
+    # Scales a stack in-place by a raster
+    # @param self The object pointer
+    # @param scale_raster The raster to scale by
+    # @return None on success, or raise ValueError on size mismatch
+    def scale_image(self, scale_raster):
+        if len(self.frame_list) == 0: # An empty list of frames
+            return                    
+
+
+        for curr_frame in self.frame_list:
+            curr_frame.scale_frame(scale_raster)
+
+        return
+
+    ##
+    # Applies the gain map to a stack through an in-place multiply
+    # @param self The object pointer
+    def apply_gain_map(self):
+        self.scale_image(self.img_sensor.gain_map)
+        
+    ##
+    # Initializes constants for xPAD files
+    # @param self The object pointer
+    # @param sys_type The system type
+    def init_xpad_hdr_consts(self, sys_type):
+        self.xpad_defs = {}
+        self.xpad_defs['version'] = (0x01 << 8) + (0x02)
+        self.xpad_defs['id'] = 0x5354 # ("ST")
+        self.xpad_defs['hdr_len'] = 256
+        self.xpad_defs['footer_len'] = 8
+        self.xpad_defs['sys_type'] = sys_type
+        self.xpad_defs['frame_len'] = 256 + 8
+        self.xpad_defs['footer_seq'] = 0xE4F1E3F2E2F3E1F4
+        self.xpad_defs['frame_status'] = 0 # A raw frame with no corrections
+        return
+        
+            
+    ##
+    # Creates xPAD files from a stack.  Expects init_xpad_hdr_consts() to
+    # have been called first
+    # XXX Assumes that image dimensions are each multiples of four
+    # @param self The object pointer
+    # @param base_filename The base name of the output file(s)
+    # @param data_type The output data type
+    # @param frames_per_file How many frames per output file
+    def create_xpad_file(self, base_filename, data_type, frames_per_file):
+        #-=-= FIXME Ignores frames_per_file for now
+        curr_timestamp = 0
+
+        new_header_gen = Xpad_Frame_Header(self.img_sensor, self.xpad_defs, data_type)
+        
+        out_file = open(base_filename+'_00000001.raw', 'wb')
+
+        for curr_frame in self.frame_list:
+            outer_blocks = new_header_gen.create_blocks(curr_timestamp)
+            curr_timestamp += 1
+            write_len = out_file.write(outer_blocks[0])
+            print("Nominal header length: {}\tWritten: {}".format(len(outer_blocks[0]), write_len))
+            
+            if data_type == eXpad_Pixel_Type.DT_UINT32:
+                curr_array = np.array(curr_frame.img_array, np.uint32)
+            elif data_type == eXpad_Pixel_Type.DT_INT32:
+                curr_array = np.array(curr_frame.img_array, np.int32)
+            elif data_type == eXpad_Pixel_Type.DT_UINT16:
+                curr_array = np.array(curr_frame.img_array, np.uint16)
+            elif data_type == eXpad_Pixel_Type.DT_INT16:
+                curr_array = np.array(curr_frame.img_array, np.int16)
+            else:
+                raise TypeError
+
+            curr_array.tofile(out_file)
+            out_file.write(outer_blocks[1])
+
+        out_file.close()
+
+        return
+    

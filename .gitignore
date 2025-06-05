@@ -1,4 +1,6 @@
-
+*.png
+*.tiff
+*.tif
 *.raw
 *.pyc
 *.*~
@@ -7,3 +9,5 @@
 .DS_Store
 config.json
 .DS_Store
+bestK.pkl
+ana_dig.pkl

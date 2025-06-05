@@ -1,0 +1,1650 @@
+//
+// Alpha - Test fitting a grid to a set of peaks
+// v 0 YF 6/5/20
+// File: GridFit2.bsh
+// v 1.2 YF 6/9/20 - Look at all 16 ASICs in image.
+// v1.3 YF 6/11/20
+// v1.4 YF 7/16/20 Update for Keck and bug fixes.
+//         7/20/20 Works correctly with 32bit images.
+
+// v1.5 YF 12/13/20 More comments. Handles 8-bit images too.
+// v1.6 YF 4/1/21
+// v1.7 YF 4/5/21 -Fixed Stencil deltaY value
+// v1.8 YF 4/5/21 - Rename as GridFit4. Major rewrite
+//  histogram dist error for each asic.
+//
+
+import ij.WindowManager; 
+import ij.IJ;
+import ij.plugin.*;
+import ij.plugin.frame.*;
+import ij.Prefs;
+//import fiji.util.gui.GenericDialogPlus;
+import ij.gui.*;
+import TakeImage;
+//import java.util.Hashtable;
+
+
+import java.awt.*;
+import java.awt.event.*;
+import java.awt.image.*;
+import ij.*;
+import ij.process.*;
+import ij.measure.*;
+import java.util.Collections;
+
+#@ String (label = "GeoCal file name") geocal_filename
+#@ String (label = "GeoCal Operation:", choices={"Read", "Create"}, style="listBox") read_create
+#@ String (label = "Type:", choices={"Keck Si", "Keck-CdTe", "MMPAD"}, style="listBox") geo_type
+// #@ Integer(label = "reference ASIC. 0 is TL, 15 is BR" ) reference_Asic
+#@ Integer(label = "Debug Step (4=Run through.  1, 2, or 3 is stop after step N)" ) debug_step
+
+//
+//
+//
+// Parameters used for CREATE Mode
+USE_ANALYZE_PARTICLE=1;
+RUN_ANALYZE_PARTICLE=1;  // 1 = Run Analyze Particle. 
+//                       // 0 = You did it manually, and Results window is open
+ 
+USE_FIND_FOCI=0;
+VERBOSE = 2;   // 0, 1, 2, 3 = chatty
+IMAGE_TYPE_8BIT = 1;
+
+// Parameters usd for READ mode
+IMAGE_TYPE_32BIT = 0;
+
+//
+//   vv Set true to run fast w/o fitting any parameters
+boolean  runfastfortesting = false;
+
+
+int W = 128;	
+int H = 128;
+
+int[] la;
+int[] ta;
+//
+//
+//
+
+// UTILITY CLASS
+static public class Util1 
+{ 
+    // function to calculate m and c that best fit points 
+    // represented by x[] and y[] 
+    static float[] bestApproximate(float[] x, float[] y) 
+    { 
+        int n = x.length; 
+        double m, c, sum_x = 0, sum_y = 0, 
+                     sum_xy = 0, sum_x2 = 0; 
+        for (int i = 0; i < n; i++) { 
+            sum_x += x[i]; 
+            sum_y += y[i]; 
+            sum_xy += x[i] * y[i]; 
+            sum_x2 += x[i]*x[i]; 
+        } 
+  
+        m = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - (sum_x * sum_x)); 
+        c = (sum_y - m * sum_x) / n; 
+  
+        if (VERBOSE >= 3) {
+        	print("   m = " + m); 
+        	print("   c = " + c);
+        }
+        return new float[] {m,c}; 
+    } 
+    static public  ArrayList  m_log = new ArrayList();
+    static public void ShowLog()
+	{
+		for(str : m_log)
+		   print(str);
+	}
+
+
+	static private float[][] m_geoCalData;
+	// Read more: https://www.java67.com/2016/07/how-to-read-text-file-into-arraylist-in-java.html#ixzz6PSdzAfU1
+	//
+	static float[] ReadGeoCalFile(String filename, int index)
+	{
+
+
+		if (m_geoCalData == null)
+		{
+			m_geoCalData = new float[16][4];
+		
+		
+				
+
+			int skip = 1;
+			FileReader fr = new FileReader(filename);
+			BufferedReader bufReader = new BufferedReader(fr); 
+			//ArrayList listOfLines = new ArrayList(); 
+			String line ; 
+			int row = 0;
+			while (true) 
+			{ 
+				line = bufReader.readLine(); 
+				if (line == null)
+					break;
+				//listOfLines.add(line); 
+				if  (line.startsWith("0:") )
+				{
+					skip = 0;
+				}
+				if (skip > 0)
+					continue;
+	
+				String[] toks =  line.split(",");
+				
+				m_geoCalData[row][0] = Float.parseFloat(toks[2]); // dx
+				m_geoCalData[row][1] = Float.parseFloat(toks[3]); // dy
+				m_geoCalData[row][2] = Float.parseFloat(toks[4]); // Mag
+				m_geoCalData[row][3] = Float.parseFloat(toks[5]); // theta
+
+				row += 1;
+							
+				
+			} 
+			bufReader.close();
+		}
+
+		return m_geoCalData[index];
+
+	}
+  
+    
+}
+
+public class GridFit implements UserFunction
+{
+	
+	public float[] xa;
+	public float[] ya;
+	final public  float grid_deltaX_pixels = 11.0f;
+	final public  float grid_deltaY_pixels = 11.0f;
+	final public  float kPixel = 0.150f; // pixel size in mm
+	
+	final private float dsqrd =  grid_deltaX_pixels* grid_deltaX_pixels +  grid_deltaY_pixels* grid_deltaY_pixels;
+	
+	private int N_Expected = 81; // 9x9  change this as needed.
+	private float kMax_Point_From_Line = Math.sqrt(grid_deltaX_pixels*grid_deltaX_pixels + grid_deltaY_pixels *grid_deltaY_pixels);
+	
+	private ArrayList m_hist = new ArrayList();
+	private ArrayList list_inOrder = new ArrayList();
+	private float  m_slope =  0;
+	private float  m_offset = 0;
+
+	private float[] m_gridx;
+	private	float[] m_gridy;
+	private float[] m_gridxp;
+	private	float[] m_gridyp;
+
+	public float m_min;
+	public float m_max;
+	public int  m_skipped;
+	public float m_error;
+
+	public double m_theta=0;
+	public double m_mag=0;
+
+	// offset from center in millimeters, from drawing "GeoCalibration"  SI-102797"
+	static final public float[] deltaX = new float[]
+	{
+		// -(19.98/2 + 19.65) , (19.98/2 ) 
+		-(19.98/2 + 19.62) , (19.98/2 ) // fixed 4/5/21 
+	};
+	
+	static final public float[] deltaY = new float[]
+	{
+		-(22 + 23.6/2.0), -(23.6/2.0), (23.6/2.0), (22 + 23.6/2.0) 
+	};
+	
+
+	static public String[] ID = new String[] 
+		{"2B", "2A",  "1B", "1A",
+		 "4B", "4A",  "3B", "3A",
+		 "6B", "6A",  "5B", "5A",
+		 "8B", "8A",  "7B", "7A"};
+		 
+	private int[] m_gridPointsInOrder=null;
+	public int m_centerIndex = -1;
+
+	ImagePlus imp;
+	
+	
+    // Constructor
+	public GridFit(int w, int h)
+	{
+		
+	}
+
+
+	//
+	//
+	//
+	public int NumPoints()
+	{
+		return xa.length;
+	}
+
+	//
+	// Assumes columns 8 & 9 are xm, ym
+	//
+	public int FindPeaks(ImagePlus impT)
+	{
+		
+		imp = impT;
+		if (1 == RUN_ANALYZE_PARTICLE)
+		{
+			IJ.run("Clear Results", "");
+		}
+
+		// border margin
+		final int border_margin = 2;
+		int mx = border_margin;
+		int my = border_margin; 
+		impT.setRoi(mx, my, W-mx*2,  H-my*2);
+		ImagePlus inset = impT.crop();
+		inset.show();
+
+
+
+		ResultsTable rt1;
+		
+        if (1 == USE_FIND_FOCI)
+        {
+
+        // 12/13/20 - W T actual F - this used to work and now it doesn't.
+        
+		//
+		//   Using FindFoci peak finding routine
+		//	
+				//IJ.run(inset,"FindFoci", "mask=(None) background_method=Mean background_parameter=2000 auto_threshold=Otsu statistics_mode=Both search_method=[Above background] search_parameter=0.63 minimum_peak_height=[Relative height] peak_parameter=0.70 minimum_size=2 sort_method=XYZ maximum_peaks=81 show_mask=[Peaks above saddle] overlay_mask fraction_parameter=0.40 show_table clear_table mark_maxima mark_using_overlay show_log_messages results_directory=[] gaussian_blur=0 centre_method=[Max value (search image)] centre_parameter=2");
+				IJ.run(inset, "FindFoci", "mask=(None) background_method=Mean background_parameter=2000 auto_threshold=Otsu statistics_mode=Both search_method=[Above background] search_parameter=0.63 minimum_peak_height=[Relative height] peak_parameter=0.70 minimum_size=2 sort_method=XYZ maximum_peaks=81 show_mask=[Peaks above saddle] overlay_mask fraction_parameter=0.40 show_table mark_maxima mark_using_overlay show_log_messages results_directory=[] save_to_memory gaussian_blur=0 centre_method=[Max value (search image)] centre_parameter=2");
+				ij.text.TextWindow tw1 = WindowManager.getWindow("FindFoci Results");
+	
+	
+	//
+			print("tw1:" + tw1);
+			print("tw1.TextPanel:" + tw1.getTextPanel() );
+			// Try [x] Save To memory
+		    print("tw1.ResultsTable:" + tw1.getResultsTable() );
+			// IDK but I need to read the results window line by line manually like an animal.
+			//TODO: ParseTextPanelResults()
+		
+        }
+
+        if (1 == USE_ANALYZE_PARTICLE)
+        {
+
+
+	//
+	//     Analyze Particles...
+	//
+			// nope IJ.setRawThreshold(inset, 0, 127, null);
+			if (1 == RUN_ANALYZE_PARTICLE)
+			{			
+				IJ.setThreshold(inset, 127, 255, "Black & White");
+				IJ.run(inset, "Analyze Particles...", "size=0-Infinity show=Outlines display clear");
+			}
+						
+			rt1 = ij.plugin.filter.Analyzer.getResultsTable();
+
+        }		
+		
+	   sz = rt1.size();
+	   if (sz < 2)
+	   {
+	   	  IJ.error(" Did not find enough points - aack.");
+	   }
+
+		
+		xa = new float[rt1.size() +1]; // use 1- based index for less confusion
+		ya = new float[rt1.size() +1];
+		
+       for(int nrow=0; nrow < rt1.size();  nrow++)
+       {
+			double x = rt1.getValueAsDouble(8,nrow);
+			double y = rt1.getValueAsDouble(9,nrow);
+			
+			xa[nrow+1] = (float)(x + mx);   // add in margin to correct for it.
+			ya[nrow+1] = (float)(y + my); 
+			
+			if (VERBOSE >= 3)
+			{
+			   print(x.toString() + "," + y.toString() + " xa:" + xa[nrow+1] + "ya:" + ya[nrow+1]);
+			}
+			
+       }
+
+       inset.close();
+       return xa.length-1;       
+	}
+	
+
+	//
+	//
+	//
+	public float[] findCenterPoint()
+	{
+		float xm = 0;
+		float ym = 0;
+		int L = xa.length;
+		for(int i = 1; i <L; i++)
+		{
+			xm += xa[i];
+			ym += ya[i];
+		}
+		xm = (xm / (float)L);
+		ym = (ym / (float)L);
+
+		print("Center of mass:" + xm + "," + ym);
+		float[] ret = new float[] {xm, ym};
+		return ret; 
+		
+	}
+
+	/*
+	 * 
+	 * @method findNearestPoint
+	 * Iterate through points and return the index of  the closest neighbor
+	 */
+	public int findNearestPoint( float xm, float ym)
+	{
+		float dist = 0;
+		float mindist = 128*128 * 2;
+		int L = xa.length;
+		int index = -1;
+
+		m_hist.clear();
+
+		if (VERBOSE >= 3) {
+			print("findNearestPoint: xm,ym = " + xm + "," + ym);
+		}
+		
+		for(int i = 1; i <L; i++)
+		{
+			dist = (xa[i]-xm) * (xa[i]-xm) + (ya[i]-ym) * (ya[i]-ym);
+
+			
+			 if (dist< mindist)
+			{
+				mindist = dist; 
+				index = i;
+			}
+		}
+
+		if (VERBOSE >= 3) {
+			print("findNearestPoint:  mindist,index = " + mindist + "," + index);
+		}
+ 
+ 		m_hist.add(index);
+ 		list_inOrder.add(index);
+
+ 		m_centerIndex  = index;
+		return index;
+	}
+
+
+	//
+	//
+	//
+	public float[] GetCenterDelta()
+	{
+		float dx = xa[m_centerIndex] - W/2;
+		float dy = ya[m_centerIndex] - H/2;
+		return new float[] {dx,dy};
+	}
+
+	//
+	// Special version does not store into array
+	//
+	public int _findNearestPoint( float xm, float ym)
+	{
+		float dist = 0;
+		float mindist = 128*128 * 2;
+		int L = xa.length;
+		int index = -1;
+
+	//print("   _fNP xm,ym: " + xm + "," + ym );
+		for(int i = 1; i <L; i++)
+		{
+			dist = (xa[i]-xm) * (xa[i]-xm) + (ya[i]-ym) * (ya[i]-ym);
+
+			// ignore points farther than 1 grid dist away.
+			if (dist > dsqrd)
+				continue;
+			if (dist< mindist)
+			{
+				mindist = dist; 
+				index = i;
+			}
+		}
+
+	//print("   _fNP:  mindist,index = " + mindist + "," + index);
+ 
+		return index;
+		
+	}
+
+	
+
+	//
+	//  Uses points in m_hist
+	//
+	public int ComputeLineFit()
+	{
+	
+		if (m_hist.size() < 2)
+		{
+			print("Error. ComputeLineFit at least two points required.");
+			return (-1);
+		}
+
+        float[] x = new float[ m_hist.size() ];
+        float[] y = new float[ m_hist.size() ];  
+        
+        
+        for(int n=0; n<  m_hist.size(); n++)
+        {
+        	int j = m_hist.get(n) ;
+        	x[n] = xa[j];
+        	y[n] = ya[j];
+        }
+
+        float[]mc = Util1.bestApproximate(x, y);
+        m_slope = mc[0];
+        m_offset = mc[1];
+		
+    return (0); // TODO	
+		
+	}
+
+
+	//
+	// Compute distance from point to line
+	//
+	public float CheckDistToBestLine( i )
+	{
+		//https://stackoverflow.com/questions/30559799/function-for-finding-the-distance-between-a-point-and-an-edge-in-java
+		float x0 = xa[i];
+		float y0 = ya[i];
+		float A = -m_slope;
+		float B = 1;
+		float C = -m_offset;
+		float top = Math.abs( A*x0 + B* y0 + C);
+		float bot = Math.sqrt(A*A + B*B);
+		float pc = top/bot;
+		return pc;
+		
+	}
+	
+   /*
+    * from the center point, look one point to the 'right'
+    *      3  
+    *   5     1
+    *      7
+    *  
+    */
+	public int FindNeighbor( int direction, int m) 
+	{
+		float dist = 0;
+		float mindist = 128*128 * 2;
+		
+		
+		int L = xa.length;
+		int index = -1;
+
+		float xs = xa[m];
+		float ys = ya[m];
+		float angle = 0;
+
+				
+		for(int i = 1; i <L; i++)
+		{
+			if (direction == 1 && xa[i] <= xs)
+			   continue;
+
+			if (direction == 5 && xa[i] >= xs)
+			   continue;
+			
+			dist = (xa[i]-xs) * (xa[i]-xs) + (ya[i]-ys) * (ya[i]-ys);
+			if (xa[i] != xs)
+			{
+				angle = (ya[i]-ys) / (xa[i]-xs);
+			}
+
+
+			if (direction == 1 && ( angle < -1 || angle > 1 ))
+				continue;
+
+			if (dist < dsqrd/4)
+			{
+				//Util1.m_log.add("Point too close");
+			}
+			else if (dist > 4*dsqrd)
+			{
+				// Util1.m_log.add("Point too far");
+			}
+			else if (dist< mindist)
+			{
+				if (m_hist.size() >=2)
+				{
+					float pc= CheckDistToBestLine( i );
+					if (VERBOSE>=3) print("  i, pc=" + i + "," + pc);
+					if (pc < (kMax_Point_From_Line * 0.5)) // Allow up to 1/2 grid dist away hardcoded here for now
+		    		{
+		    			mindist = dist; 
+						index = i;
+		    			 
+		    		}
+					
+				}
+				else
+				{
+					if (VERBOSE>=3) print("   Initial pt. i = " + i);
+					mindist = dist; 
+					index = i;
+				}
+				
+				
+			}
+		}
+
+		if (index <0)
+		{
+			if (VERBOSE>=3) print ("   NOTHING FOUND.");
+			return index; // nothing found.
+		}
+			
+
+
+		if (VERBOSE>=3) print(" Add: i=" + index);
+		m_hist.add(index);
+	    ComputeLineFit();	
+
+	    if (direction == 1)
+	    {
+	    	list_inOrder.add(index); // append
+	    }
+	    else if (direction == 5)
+	    {
+	    	list_inOrder.add(0,index); // insert at beginning
+	    }
+	        	
+
+       
+		return index;
+		
+	}
+
+
+
+	//
+	//
+	//
+	public float ComputeAverageDelta()
+	{
+		float sum = 0;
+		for(int i = 1; i < m_hist.size(); i++)
+		{
+			int j = list_inOrder.get(i-1);
+			int k = list_inOrder.get(i);
+
+		print("CAD: j,k: " + j + "," + k );
+			float dist  = Math.sqrt( (xa[j]  - xa[k] ) * (xa[j]  - xa[k] ) +
+						  (ya[j]  - ya[k] ) * (ya[j]  - ya[k] ) );
+						  
+			sum += dist;
+		}
+
+		return(sum / (m_hist.size()-1) );
+	}
+	
+
+
+	public int CreateGrid(int centerIndex, delta)
+	{
+		int N = xa.length - 1;  
+		int last = m_hist.size() - 1;
+		
+		float cx = xa[centerIndex];
+		float cy = ya[centerIndex];
+		
+		
+		
+		
+	
+		print("CreateGrid. delta = " + delta);
+		
+		// if N_Expected is also number of pointd found then we are solid.
+		if (N_Expected == N )
+		{
+			print("Info. Received and expected N points:" + N_Expected);
+		}
+		else
+		{
+			print("Warning. Received !=  expected : :" + N  + "," + N_Expected  );
+		}
+		// either create a grid of N_Expected.
+	
+		int cnt = 0;
+		int mid = Math.sqrt(N_Expected) / 2;
+	
+		m_gridx = new float[ N_Expected ];
+		m_gridy = new float[ N_Expected ];
+
+		m_gridxp = new float[ N_Expected ]; // TODO
+		m_gridyp = new float[ N_Expected ];
+		
+		for(int j=0; j< Math.sqrt(N_Expected); j++)
+		{
+			for(int i=0; i < Math.sqrt(N_Expected); i++)
+			{
+				m_gridx[cnt] = cx + (i-mid)* delta ;
+				m_gridy[cnt] = cy + (j-mid)* delta ;
+
+			//print("   x,y" + m_gridx[cnt] + "," + m_gridy[cnt] );
+				cnt += 1;			
+			}
+		}
+		
+		return(0);
+	} 
+
+
+	//
+	//
+	//
+	public float[] GetBestLineFit()
+	{
+		return new float[] {m_slope, m_offset};
+	}
+
+
+	//
+	//
+	//
+	public int TransformGrid(float m,  float theta)
+	{
+
+		float cx = xa[m_centerIndex];
+		float cy = ya[m_centerIndex];
+
+	//print("TG: cx,cy" + cx + "," + cy );
+
+		
+		for(int i=0; i< m_gridx.length; i++)
+		{
+			float x = m_gridx[i] - cx ;
+			float y = m_gridy[i] - cy ;
+			
+			m_gridxp[i] = m * (float)( x * Math.cos(theta) - y * Math.sin(theta) ) + cx ;
+			m_gridyp[i] = m * (float)( x * Math.sin(theta) + y * Math.cos(theta) ) + cy ;
+
+		//print("TG: x,y = " + m_gridx[i] + "," + m_gridy[i] );
+		}
+
+		return (0);
+	}
+
+
+	//
+	//
+	//
+	public double userFunction(double[] params, double dummy)
+	{
+		m_error = 0;
+		m_min = 9999;
+		m_max = 0;
+		m_skipped=0;
+		
+		int L = m_gridx.length;
+
+
+		// try to set up just once.
+		if (m_gridPointsInOrder == null)
+		{
+			m_gridPointsInOrder = new int[ L ];
+			for(int i=0; i< L; i++)
+			{
+				// for each grid point - find closest point.
+				int k = _findNearestPoint( m_gridxp[i], m_gridyp[i]);
+				m_gridPointsInOrder[i] = k;
+			}
+			
+		}
+		
+		 TransformGrid((float)params[0], (float)params[1] );
+		//TransformGrid(0, 0, (float)params[2]);
+		
+		for(int i=0; i< L; i++)
+		{
+			int k  = m_gridPointsInOrder[i];
+			if (k>0)
+			{
+				float dx = xa[ k ] - m_gridxp[i];
+				float dy = ya[ k ] - m_gridyp[i];
+				float D =(dx*dx + dy*dy); 
+				m_error += D;
+				if (D < m_min )
+					m_min = D;
+				if (D > m_max )
+					m_max = D;
+					
+			}
+			else
+			{
+				m_skipped += 1;
+			}
+			
+	//print( "i, m_gridPInOrdere[i], m_gridx[i]:" + i + "," + m_gridPointsInOrder[i] + "," + m_gridx[i] ); 
+	//print("  uF	dx,dy:" + dx + "," + dy );	
+			
+		}
+
+
+
+	//print(" uF params" + params.length + ":" + params[0] + "," + params[1] + "," + params[2] + "err:" + error );
+
+		return m_error;
+	}
+
+
+	//
+	//
+	//
+	public double[] FitBestGrid(double[] initialParams, double[] paramVariations )
+	{
+		Minimizer mz = new Minimizer();
+		//mz.setMaxRestarts(10); // try 
+		//mz.setMaxIterations(64); // try
+		//javap(mz);	
+		mz.setMaxError(1e-5); // default is 1e-10 
+		mz.setFunction( this, 2); // this?
+
+// *********************************************** DEBUG **********************************************
+		
+		if (runfastfortesting)
+		{
+			return new double[] {1.0, 0.01};
+		}
+		
+		int ret = mz.minimizeOnce(initialParams,paramVariations );
+		//int ret = mz.minimize(initialParams,paramVariations );
+
+		double[] finalParams = mz.getParams();
+		print("DONE ret = " + ret );
+		//for( double d : finalParams)
+		//{
+		//	print(d);
+		//}
+
+
+		
+		return finalParams;
+	}
+
+
+
+	
+
+
+
+	//
+	// returns slope, offset
+	//
+	public float[] FindLineOfHorizontalCenterPoints()
+	{
+		int n2 = FindNeighbor( 1 /* right */, m_centerIndex) ;
+	
+		print("++++++++++++++++++++++");
+		while (true)
+		{
+		  n2 = FindNeighbor( 1 /* right */, n2) ;
+		  if (n2 < 0)
+		     break;
+		}
+		
+		print("----------------------");
+		n2 = FindNeighbor( 5 /* left */, m_centerIndex) ;
+		while (true)
+		{
+		  n2 = FindNeighbor( 5 /* left */, n2) ;
+		  if (n2 < 0)
+		     break;
+		}
+		
+		return GetBestLineFit(); // returns slope, offset
+	}
+	
+}// class
+
+
+//
+//
+//
+// ******************************  CLASS Main ********************
+//
+//
+//
+public class Main
+{
+
+	
+	public int bitsPerPixel;
+	public ImagePlus imp_full;
+	public ImagePlus impC;
+
+	public 	int NP = 0;
+	public double m_reference_mag=0;
+	public double m_reference_theta=0;
+	public int m_reference_centerIndex = 0;
+	
+	final public  int MARGIN = 20;
+	
+	
+	
+	
+	//
+	// Constructor
+	//
+	public Main()
+	{
+		la = new int[] 
+			{0, 1*W, 2*W, 3*W, 
+			 0, 1*W, 2*W, 3*W, 
+			 0, 1*W, 2*W, 3*W, 
+			 0, 1*W, 2*W, 3*W };
+		 
+		ta = new int[] 
+			{0, 0, 0, 0, 
+			 1*H, 1*H, 1*H, 1*H,
+			 2*H, 2*H, 2*H, 2*H,
+			 3*H, 3*H, 3*H, 3*H };
+		
+	}
+
+
+
+	public void closeWindows(String name)
+	{
+
+
+		
+		if (name.endsWith("*"))
+		{
+			String name2 = name.substring(0, name.length()-1);
+			String[] strTitles = WindowManager.getImageTitles();
+			for( int n =0; n< strTitles.length; n++)
+			{
+				if (strTitles[n].startsWith(name2) )		
+				{
+					java.awt.Window win = WindowManager.getWindow(strTitles[n]);
+					if (win != null)
+						win.close();
+					
+				}
+			}
+
+			return;
+		}
+	
+		// close previous windows
+		ImagePlus im = WindowManager.getImage("Corrected");
+		Window win;
+		if (im != null)
+		im.close();
+		
+		for(int n=0;n<16; n++)
+		{
+			win = WindowManager.getWindow("F"+n+" FindFoci");
+			if (win != null)
+				win.close();
+		}	
+				
+		for(int n=0;n<16; n++)
+		{
+			win = WindowManager.getWindow("F"+n);
+			if (win != null)
+				win.close();
+		}	
+		
+	}
+
+
+
+	public int doCreate()
+	{
+		GridFit[] gfa = new GridFit[16];
+		for(int nAsic =0; nAsic< 16  ; nAsic++)
+		{
+			 if (IJ.escapePressed())
+		    	return (-1);
+		    	
+			gfa[ nAsic] = new GridFit(W,H);
+			imp_full.setRoi( la[nAsic],ta[nAsic], W , H );
+			ImagePlus imp = imp_full.crop();
+			imp.setTitle("F" + nAsic);
+			
+	
+			NP = gfa[nAsic].FindPeaks(imp); // place imp INTO object gridfit.
+
+			if (debug_step == 1) {
+				print("^^^^ Result of FindPeaks ^^^^^.");
+				print("  nAsic:" + nAsic + " of 15");
+				IJ.error("DEBUG STEP 1. PAUSED.");
+			}
+
+			if (debug_step > 1)
+			{
+				int ret = measureAngle( gfa[nAsic] );
+
+				if (debug_step == 2) {
+					float[] ctrDelta = gfa[nAsic].GetCenterDelta(); 
+					print("      Found center point index:" + m_reference_centerIndex + "(dx,dy):" + 
+					   ctrDelta[0] + "," + ctrDelta[1] );			
+					IJ.error("DEBUG STEP 2. PAUSED.");
+				}
+
+			}
+
+			imp.close();			
+		}
+
+		if (debug_step > 2)
+		{
+			submodule[] sma = new submodule[8];
+			for(int nSubModule =0; nSubModule< 8; nSubModule++)
+			{
+				// 0 --> 0,1;   1--> 2,3; ...
+				int leftASIC = nSubModule * 2;
+				int rightASIC = leftASIC+1;
+				sma[ nSubModule] = new submodule(nSubModule, gfa[leftASIC], gfa[rightASIC] );
+				sma[ nSubModule].rotate() ;			// this rotates the found peaks of submodule( 2 ASICS) about the center
+
+				if (debug_step == 3)
+				{
+					String str = String.format("ASICS:  %d & %d: (%f,%f)  (%f,%f)",
+				   		new Object[] { leftASIC,rightASIC, sma[ nSubModule].xar[1], sma[ nSubModule].yar[1] , 
+				   		   sma[ nSubModule].xar[2], sma[ nSubModule].yar[2] } );
+
+				   	print(str);	   
+				}
+			}
+
+
+			// 1st pass - values are negative
+			float minX = 9999;
+			float minY = 9999;
+			for (int nPass = 0; nPass < 2 ; nPass++)
+			{
+				 if (IJ.escapePressed())
+		    		return (-1);
+
+				print("***** PASS #: " + nPass + "*****");
+				for(int nSubModule =0; nSubModule< 8; nSubModule++)
+				{
+					final float kPixel = 0.150; // pixel size in mm
+					int ix = (nSubModule % 2);
+					int iy = (nSubModule / 2 );
+
+					submodule sm = sma[ nSubModule ] ;
+					
+					float ave_mag = sm.m_aveMag;
+					int nAsic = nSubModule *2 ;
+	
+					float cx,cy,gx,gy;
+					float cx = ave_mag * ( GridFit.deltaX[ ix ] ) /kPixel  - (sm.xar[1] - W/2);
+					float cy = ave_mag * ( GridFit.deltaY[ iy ] ) /kPixel  - (sm.yar[1] - H/2);
+	
+					float gx = cx - W/2;
+					float gy = cy - H/2;
+
+					if (nPass == 0) {
+			              if (gx < minX) minX = gx;
+			              if (gy < minY) minY = gy;
+					}
+					else
+					{
+						gx -= minX;
+						gy -= minY;
+
+						sma[ nSubModule ].gx = gx;
+						sma[ nSubModule ].gy = gy;
+						
+						 
+						String str = String.format("%d, %d, %s, %4.3f, %4.3f, %4.3f, %4.3f, %4.3f, %4.3f, %d",
+				   		new Object[] { nSubModule , sm.NP, GridFit.ID[nAsic], sm.m_aveTheta * 57.295, gx, gy, ave_mag, 
+				   			sm.m_max, gfa[ nAsic].m_error,  sm.m_skipped} );
+
+				   		Util1.m_log.add(str);
+						
+						PutInCorrectedImage( sma[ nSubModule ] );
+					}					
+				}
+			}	
+		} // if (debug_step > 2)
+
+		
+		return (0);
+		
+	} // doCreate
+
+	
+/*
+	public int doCreate()
+	{
+		gf =  new GridFit(W,H);
+		int j = reference_Asic;
+		int reference_SubMod = (reference_Asic / 2 ) * 2; 
+		imp_full.setRoi( la[j],ta[j], W , H );
+		ImagePlus imp = imp_full.crop();
+		imp.setTitle("F" + j);
+	
+		NP = gf.FindPeaks(imp); // place imp INTO object gridfit.
+
+		if (debug_step == 1) {
+			print("^^^^ Result of FindPeaks ^^^^^.");
+			IJ.error("DEBUG STEP 1. STOP.");
+		    return(0);
+		}
+
+		doTheRest();
+		m_reference_centerIndex = gf.m_centerIndex;
+				
+		if (debug_step == 2) {
+			float[] ctrDelta = gf.GetCenterDelta(); 
+			print("Using reference ASIC" + m_reference_Asic + " Found cener point index:" + m_reference_centerIndex);
+			print("   (dx,dy):" + ctrDelta[0] + "," + ctrDelta[1] );
+			print("DEBUG Step 2 completed. STOP");
+			IJ.exit();
+			return (0);
+		}
+
+		
+
+		int sm = j;
+		// pull out full submodule
+		if (( j % 2) == 1) { // odd
+			{
+				sm = j-1;
+			}
+		}
+		
+		imp_full.setRoi( la[sm],ta[sm], W*2 , H );
+		ImagePlus subMod = imp_full.crop();
+
+		subMod.setTitle("SM" + sm);
+		subMod.show();
+
+		//// Rotate image by the amount
+		// NOT theta = (float)results[1];
+
+		ImagePlus C0 = gf.AddPixelShift(subMod );
+		// NOT ImagePlus C1 = gf.CorrectImage(C0, theta);
+
+	 	
+		gf.PutInCorrectedImage( impC, C0,  sm, 0, 0, 0);
+
+		if (debug_step == 3) {
+			print("DEBUG Step 3 completed. STOP");
+			IJ.exit();
+			return (0);
+		}
+
+
+		// Rotate the rest to match
+		for(int nSubMod=0; nSubMod< 8; nSubMod++)
+		{
+			if (nSubMod == reference_SubMod) {
+				continue;
+			}
+			gf =  new GridFit(W,H);
+				
+			imp_full.setRoi( la[nSubMod],ta[nSubMod], W , H );
+			ImagePlus imp = imp_full.crop();
+			imp.setTitle("F" + j);
+			
+			NP = gf.FindPeaks(imp); // place imp INTO object gridfit.
+			
+			doTheRest();
+
+			double mag = results[0];
+			double theta = results[1];
+			float correction_Theta = (theta - m_reference_theta);
+
+
+			imp_full.setRoi( la[nSubMod],ta[nSubMod], W*2 , H );
+			ImagePlus subMod = imp_full.crop();
+		
+
+		    C0 = gf.AddPixelShift(subMod );
+			C1 = gf.CorrectImage(C0, correction_Theta);
+			gf.PutInCorrectedImage( impC, C1,  nSubMod, 0, 0, 0);
+
+			if (debug_step == 4) {
+				print("Submodule " + nSubMod + " correction_Theta:" +  correction_Theta);
+				print("DEBUG Step 4 completed. STOP");
+				IJ.exit();
+				return (0);
+			}
+
+			
+		} // for
+
+
+	
+		
+	}
+
+	*/
+
+
+	public int measureAngle(GridFit gf)
+	{
+		
+		// compute average center from sum of all points
+		float[] CoM = gf.findCenterPoint();
+
+	
+		// Get the closest point to that center
+		int centerIndex = gf.findNearestPoint(  CoM[0], CoM[1] );
+		
+		float[] ret = gf.FindLineOfHorizontalCenterPoints();
+		
+		float theta =  ret[0]; //slope
+		print("Theta = " + theta + "(" + theta * 180.0/3.141 + ")" );
+		
+		float delta = gf.grid_deltaX_pixels;
+		gf.CreateGrid(centerIndex, delta);
+		float m=1.0; 
+			
+		
+		gf.TransformGrid(m,theta);
+		
+		double[] initialParams = new double[] {m,theta};
+		double[] paramVariations = new double[] {.01, .01};
+		
+		print(" initialParams: " + initialParams[0] + "," + initialParams[1]  );
+		double[] results = gf.FitBestGrid( initialParams, paramVariations );
+		
+		// ******************************************
+		// How to do formatted strings  in bsh
+		// ******************************************
+		String str = String.format("Final Values: m= %5.3f, theta =%5.3f (%5.3f)", new Object[]
+			{results[0], results[1], results[1] * 57.295} );	
+			
+		print(str);	
+		
+		gf.m_mag = results[0];
+		gf.m_theta = results[1]; // radians
+
+
+		return (0);
+	}
+
+
+
+	public int doRead()
+	{
+		return (0); // stubbed
+	}
+
+
+	
+	public int Go()
+	{
+
+		closeWindows("DUP_*");
+		closeWindows("Drawing*");
+		closeWindows("SM*");
+		closeWindows("temp*");
+		closeWindows("Ctemp*");
+		
+		closeWindows("");
+		
+		
+		imp_full = WindowManager.getImage("F");
+		
+		if (imp_full == null)
+		{
+			IJ.error("Name the window 'F', and re-run");
+			return (-1);
+		}
+		
+		// ASSERT that image is 512x512
+		if ( (imp_full.getWidth() != 512) || (imp_full.getHeight() != 512) )
+		{
+			IJ.error("Error. Expected image size is 512 x 512 ");
+			IJ.exit();
+			return (-1);	
+		}
+	
+	
+		
+		if (geo_type.startsWith("Keck"))
+		{
+			W = 129;
+		}
+	
+		bitsPerPixel = imp_full.getBitDepth();
+		// create a blank oversized image.
+		impC = IJ.createImage("Corrected", W*4 + 20,  H*4+100, 1, bitsPerPixel); // 16  bits for Keck
+		impC.changes=false;
+		impC.show();
+			
+			 
+		IJ.resetEscape();
+		
+		Util1.m_log.add("#, NP, ID, Theta, TL_X, TL_Y, Mag,  MaxE, err, NS");
+
+		if ("Create".equals(read_create) ) {
+			return doCreate();
+		}
+		else {
+			return doRead();
+		}
+
+		
+		return (-1);
+	}
+
+
+
+	
+	// put submodule in the corrected imp at the right position and angle
+	public int PutInCorrectedImage( submodule sm )
+	{
+		int j = sm.m_num;
+		int nAsic = j*2;
+
+
+		print("impC:" +impC); // DEBUG
+
+		
+		imp_full.setRoi( la[nAsic],ta[nAsic], W*2 , H );
+		ImagePlus subMod = imp_full.crop();
+
+		subMod.setTitle("SM" + j);
+		subMod.show();
+
+		ImagePlus C0 = sm.AddPixelShift(subMod );
+		ImagePlus C1 = sm.CorrectImage(C0, sm.m_aveTheta);
+
+		ImagePlus imp1 = C1;
+	   	imp1.copy();
+		impC.setRoi((int)( sm.gx), 
+		   (int)(sm.gy), imp1.getWidth(), imp1.getHeight());
+		impC.paste();
+
+		C1.close();
+		C0.close();
+
+
+	print("debug: PutInCorrectedImage(): "  + (int)( sm.gx) + "," + 
+		   (int)(sm.gy) + "," +  imp1.getWidth() + "," +  imp1.getHeight( ) ); // DEBUG
+
+		return (0);
+	}
+	
+} // class Main
+
+
+public class submodule
+{
+
+	private float[] xa;
+	private float[] ya;
+	public float[] xar;
+	public float[] yar;
+
+	public int NP;
+
+	public float gx;
+	public float gy;
+	
+	public double m_aveTheta = 0;
+	public double m_aveMag = 0;
+
+	public float m_min;
+	public float m_max;
+	public int  m_skipped;
+	public float m_error;
+	
+
+	public int m_num = -1;
+	
+	public int kCONSTANT = 130; // this is (128 + 3) - 1 added shift pixels
+	
+	public submodule( int nNum, GridFit leftASIC, GridFit rightASIC)
+	{
+		xa = new float[ 3 ]; // 1-based
+		ya = new float[ 3 ];
+		
+		m_num = nNum;
+
+		float[] xy = leftASIC.GetCenterDelta();
+		
+		xa[1] = xy[0] + W/2;
+		ya[1] = xy[1] + H/2;
+		
+		xy = rightASIC.GetCenterDelta();
+		
+		xa[2] = xy[0] + W/2 + kCONSTANT;
+		ya[2] = xy[1] + H/2;
+		
+
+		// Hey yo - I am going to FLIP the THETA angle HERE. This will be the correction applied.
+		m_aveTheta = -1 * (leftASIC.m_theta + rightASIC.m_theta)/2.0;
+		m_aveMag   = (leftASIC.m_mag   + rightASIC.m_mag )/2.0;
+
+		
+
+		NP = leftASIC.NumPoints() + rightASIC.NumPoints() - 2;
+
+		m_min = Math.min( leftASIC.m_min, rightASIC.m_min);
+		m_max = Math.max( leftASIC.m_max, rightASIC.m_max);
+		m_skipped = leftASIC.m_skipped + rightASIC.m_skipped; 
+		
+		
+		//
+
+	// DEBUG [0]
+//		String str = String.format( "submodule(): xa,ya(%f,%f) (%f,%f)", 
+//		    new Object[] { xa[1], ya[1], xa[2], ya[2] } );
+//		print(str);    
+//		    IJ.error("STOP!");
+	//	[0]
+	}
+
+
+	// rotate the CENTERs
+	// rotate by average of two angles of each ASIC
+	public rotate()
+	{
+
+		// since y goes 0 to positive down the page, theta rotates CW.
+		final int pShift = 3;
+		int W_APS = W*2 + pShift;
+		
+		xar = new float[ xa.length ];
+		yar = new float[ xa.length ];
+
+		float cx  =  (W_APS/2.0);
+		float cy = H/2;
+		for(int n=1; n < xa.length; n++)
+		{
+			float x = xa[n] - cx;
+			float y = ya[n] - cy;
+			xar[n] = (float)( x * Math.cos(m_aveTheta) - y * Math.sin(m_aveTheta) )  + cx;
+			yar[n] = (float)( x * Math.sin(m_aveTheta) + y * Math.cos(m_aveTheta) )  + cy;
+		}
+		
+	}
+
+
+	//
+	//
+	//
+	public ImagePlus AddPixelShift(ImagePlus impIn )
+	{
+		final int pShift = 3;
+		int W_APS = W*2 + pShift;
+		int bitsPerPixel = impIn.getBitDepth();
+		
+		ImagePlus impAPS = IJ.createImage("temp", W_APS, H, 1,  bitsPerPixel );
+
+		 pix_in = impIn.getProcessor().getPixels();
+		 data =   impAPS.getProcessor().getPixels();
+		
+
+		//impAPS.show(); // debug
+
+		for (int y=0; y<H; y++)
+		{
+			for(int x = 0; x<W; x++)
+			{
+				int pix_offset_in = y*2*W + x;
+				int pix_offset_out = y*W_APS + x;
+
+
+// debug
+//IJ.log("x,y" + x "," + y);
+				
+
+			   data[ pix_offset_out] = pix_in[ pix_offset_in];
+			   data[ pix_offset_out + W + pShift] = pix_in[ pix_offset_in + W];
+			 	
+			}
+			
+		}
+		
+
+
+		// Schmeer the intensity across the 5 pixels
+		
+		for (int y=0; y<H; y++)
+		{
+			int pix_offset = y*W_APS;
+			// stupid Java has no unsigned types for god's sake.
+
+if (IMAGE_TYPE_8BIT == 1)
+{
+		// Code works wit 16 bit images	
+		
+			// Code works with 32 bit images
+			val1 = ( data[ pix_offset + (W-1)]      );
+			val2 = ( data[ pix_offset + W + pShift] );
+			
+			data[ pix_offset + W-1 ] = (byte)(val1 * 0.40f);
+			data[ pix_offset + W   ] = (byte)(val1 * 0.40f);
+			data[ pix_offset + W+1 ] = (byte)( (val1 * 0.20f) + (val2 * 0.20f));
+			data[ pix_offset + W+2 ] = (byte)(val2 * 0.40f);
+			data[ pix_offset + W+3 ] = (byte)(val2 * 0.40f);
+			
+}
+
+		
+if (IMAGE_TYPE_16BIT == 1)
+{
+		// Code works wit 16 bit images	
+		
+			float val1 = (float) ( data[ pix_offset + (W-1)] & 0xffff);
+			float val2 = (float) ( data[ pix_offset + W + pShift] & 0xffff);
+			data[ pix_offset + W-1 ] = (short)(val1 * 0.40);
+			data[ pix_offset + W   ] = (short)(val1 * 0.40);
+			data[ pix_offset + W+1 ] = (short)( (val1 * 0.20) + (val2 * 0.20));
+			data[ pix_offset + W+2 ] = (short)(val2 * 0.40);
+			data[ pix_offset + W+3 ] = (short)(val2 * 0.40);
+			
+}
+
+if (IMAGE_TYPE_32BIT == 1)
+{
+		// Code works with 32 bit images
+			val1 = ( data[ pix_offset + (W-1)]      );
+			val2 = ( data[ pix_offset + W + pShift] );
+			
+			data[ pix_offset + W-1 ] = (val1 * 0.40f);
+			data[ pix_offset + W   ] = (val1 * 0.40f);
+			data[ pix_offset + W+1 ] = ( (val1 * 0.20f) + (val2 * 0.20f));
+			data[ pix_offset + W+2 ] = (val2 * 0.40f);
+			data[ pix_offset + W+3 ] = (val2 * 0.40f);
+
+
+}
+			
+				
+		}
+		
+
+		//impAPS.updateAndDraw();
+		impAPS.changes=false;
+		return impAPS;
+
+	}
+
+
+
+
+	
+	//
+	// 
+	//
+	public ImagePlus  CorrectImage(ImagePlus imp, double theta)
+	{
+		// rotate about center I guess.
+		
+		ImagePlus imp2 = imp.duplicate();
+		imp2.show();
+		String str = String.format( "angle=%f interpolation=Bilinear enlarge", new Object[] { theta * 57.295 } );
+	//print(str);
+		IJ.run(imp2, "Rotate... ", str);
+
+	//print(str);
+
+		// IJ.run(imp2, "Scale...", str);
+
+        imp2.setTitle("C" + imp.getShortTitle() );
+        imp2.changes=false;
+
+		return imp2;
+	}
+	
+
+}
+
+	
+
+
+/*
+	
+	//
+	//
+	for(int n=0; n< asic_indexes.size() ; n++)
+	{
+									// ** Create mode only **
+	    int j = asic_indexes.get(n);		// FIRST one is the reference ASIC
+	    if (n>0 && j == reference_Asic) {
+	    	continue; // skip it the second time around 	
+	    }
+
+		GridFit gf =  new GridFit(W,H);
+		imp_full.setRoi( la[j],ta[j], W , H );
+		ImagePlus imp = imp_full.crop();
+		imp.setTitle("F" + j);
+		// imp.show();
+		float theta = 0;
+		float deltaX = 0;
+		float deltaY = 0;
+		double[] results = new double[] {0,0};
+		int NP = 0;
+	
+		if ("Create".equals(read_create) )
+		{
+			NP = gf.FindPeaks(imp); // place imp INTO object gridfit.
+	
+			
+	if (debug_step == 1 )
+	{
+		print("^^^^ Result of FindPeaks ^^^^^.");
+		print("DEBUG Step 1 completed. STOP");
+		IJ.exit();  // Should have 81 points found on reference ASIC
+		return;
+	}
+		
+
+			
+
+		else
+		{
+			// todo - read geocal file
+			float[] ret = Util1.ReadGeoCalFile( geocal_filename, j );
+	
+		//print("debug ret = " + ret[0] + "," + ret[1] + "," + ret[2] + "," + ret[3] );
+	
+			
+			// - get back dx,dy,theta
+			deltaX = ret[0];
+			deltaY = ret[1];
+			results[0] = ret[2];
+			results[1] = ret[3] / 57.295;  // convert degrees to radians
+	
+	
+		}
+	
+	
+		str = String.format("%d: %d, %s, %4.3f, %4.3f, %4.3f, %4.3f, %4.3f, %4.3f,  %d",
+			   new Object[] { j, NP, ID[j], deltaX, deltaY, results[0], results[1]*57.295, 
+			   gf.m_max, gf.m_error,  gf.m_skipped} );
+			
+		Util1.m_log.add(str);
+	
+		// grab full submodule:
+		if (j % 2 == 0)
+		{
+			imp_full.setRoi( la[j],ta[j], W*2 , H );
+			ImagePlus subMod = imp_full.crop();
+			subMod.setTitle("SM" + j);
+			subMod.show();
+	
+			// Rotate image by the amount
+			theta = (float)results[1];
+	
+			ImagePlus C0 = gf.AddPixelShift(subMod );
+			ImagePlus C1 = gf.CorrectImage(C0, theta);
+		
+			gf.PutInCorrectedImage( impC, C1, j,  deltaX, deltaY, theta, C0.getWidth() );
+			
+		
+			if (debug )
+			{
+		    	WaitForUserDialog wd = new ij.gui.WaitForUserDialog("next");
+		    	wd.show();
+			}
+	
+			
+		
+		    if (IJ.escapePressed())
+		    	break;
+		    //imp.close();
+		    C0.changes = false;	    C0.close();
+		    C1.changes = false;     C1.close();
+		    subMod.close();
+		}
+	    
+		
+	} // loop
+}
+
+*/
+
+// Run Main loop
+
+
+//
+//
+
+//
+// ******************** MAIN *******************
+//
+main()
+{
+	Main theMain = new Main();
+	int ret = theMain.Go();
+	if (ret <0)
+	{
+		print("Terminated.");
+	}
+
+	Util1.ShowLog();
+	
+	print("****  DONE  ****");
+}
+
+
+
+
+main();

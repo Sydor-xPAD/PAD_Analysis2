@@ -4,7 +4,7 @@
 
 # YF 6/23/23 - Tweaks
 # v 1.0 6/29/23 - Converted to class object. See main in this file for example
-
+# v 1.1 1/26/24 - Combine Keck and MMPAD data formats into one.
 import numpy as np
 import sys
 import os
@@ -42,17 +42,34 @@ class Metadata:
 
 
 class KeckFrame:
-    def __init__(self, filepath) -> None:
+    def __init__(self, filepath, imgType = 'KECK') -> None:
+        """ type = "MMPAD" will load MMPAD images 
+        """
         self.filepath = filepath
         self.dataFile = None
         self.numImages = 0
+        self.imgType = imgType
+        self.dtype = np.dtype('int16')
+        self.footerSize = 1024 - 256
+        self.readExtraByte = False
+
+        self.oneImageSize = (1024+512*512*2) # KECK
+        if imgType == 'MMPAD':
+            self.oneImageSize = (2048+512*512*4) # MM
+            self.dtype = np.dtype('int32')
+            self.footerSize = 2048 - 256
+            self.readExtraByte = True
+
+
         self.open()
+        
+
 
 
     def open(self) -> bool:
         self.dataFile = open( self.filepath,"rb")
         if self.dataFile:
-            self.numImages = int(os.path.getsize( self.filepath)/(1024+512*512*2))
+            self.numImages = int(os.path.getsize( self.filepath)/self.oneImageSize)
             return True
 
         return False
@@ -69,8 +86,13 @@ class KeckFrame:
         headerbytes = self.dataFile.read(16) 
         lengthParms = struct.unpack("<IHHBB6x",headerbytes)
         headerbytes = self.dataFile.read(16)   # The first 48 are <?> in the file header
-        headerbytes = self.dataFile.read(40)   # At 0x800000   to 0x800029
-        frameMeta = struct.unpack("<QIIQIIII",headerbytes) # Q = 8, I = 4
+        if self.readExtraByte:
+            headerbytes = self.dataFile.read(41)   # At 0x800000   to 0x800029
+            frameMeta = struct.unpack("<QIIQIIIIB",headerbytes) # Q = 8, I = 4
+        else:
+            headerbytes = self.dataFile.read(40)   # At 0x800000   to 0x800029    
+            frameMeta = struct.unpack("<QIIQIIII",headerbytes) # Q = 8, I = 4
+        
         # ADDR   Param                              Index
         #  0x800000  Host Ref Tag           Q_1      0
         #  0x800004  Host Ref Tag           Q_2      0  
@@ -83,8 +105,11 @@ class KeckFrame:
         #  0x800020  various_metame          I       6
         #  0x800024  ReadoutDelay            I       7
         
-        
-        headerbytes = self.dataFile.read(256-(16+16+16+40)) #read remainder of header bytes
+        if self.readExtraByte:
+            headerbytes = self.dataFile.read(256-(16+16+16+41)) #read remainder of header bytes
+        else:
+            headerbytes = self.dataFile.read(256-(16+16+16+40)) #read remainder of header bytes    
+
         # Actually these are all 0?
         s = 0
         SensorTemp = np.zeros( (8,1), dtype='int16')  # nope :-(
@@ -102,10 +127,14 @@ class KeckFrame:
         #print(capNum)
 
         
-        dt = np.dtype('int16')
+        dt = self.dtype 
         data = np.fromfile(self.dataFile, count = (lengthParms[1] * lengthParms[2]), dtype = dt)
-        footer = self.dataFile.read(768) #read footer bytes 
-        footerB = struct.unpack("<384H",footer) #  read into list of uint16
+        footer = self.dataFile.read(self.footerSize) #read footer bytes 
+        if self.imgType =='MMPAD':
+            footerB = struct.unpack("<448I",footer) #  read into list of uint32
+        else:            
+            footerB = struct.unpack("<384H",footer) #  read into list of uint16
+        
 
         # DEBUG
         #print (tuple(hex(num) for num in footerB) )
@@ -168,21 +197,22 @@ if __name__ == "__main__":
     # Code to be executed when the script is run directly
     print("Start.")
 
-    #"C:\Sydor Technologies\temptst_00000001.raw"
-    #"C:\Sydor Technologies\temptst2_T21_00000001.raw"
-    #"C:\Sydor Technologies\temptst3_T28_00000001.raw"
-    #"C:\Sydor Technologies\temptst40_00000001.raw"
-    #"C:\Sydor Technologies\S08a_CeO2_06_00000001.raw"
-
+    # Example, how to read an MM-PAD frame with the BKL library
+    #MM_Fore = BKL.KeckFrame( foreFile , imgType = 'MMPAD')
     
-    fore_filepath = r"C:\Sydor Technologies\50KV_0C_1ms_cap0_f_00000001.raw" # "C:\Sydor Technologies\temptst_00000001.raw" # C:/mnt/raid/keckpad/set-yoram/run-2023-06-23-16-21-32/frames/2023-06-23-16-21-32_00000001.raw"
-    back_filepath = r"C:\Sydor Technologies\50KV_0C_1ms_cap0_b_00000001.raw" # "/mnt/raid/keckpad/set-yoram/run-2023-06-23-16-23-00/frames/2023-06-23-16-23-00_00000001.raw"
+    #fore_filepath = r"C:\Sydor Technologies\50KV_0C_1ms_cap0_f_00000001.raw" # "C:\Sydor Technologies\temptst_00000001.raw" # C:/mnt/raid/keckpad/set-yoram/run-2023-06-23-16-21-32/frames/2023-06-23-16-21-32_00000001.raw"
+    #back_filepath = r"C:\Sydor Technologies\50KV_0C_1ms_cap0_b_00000001.raw" # "/mnt/raid/keckpad/set-yoram/run-2023-06-23-16-23-00/frames/2023-06-23-16-23-00_00000001.raw"
 
+    #fore_filepath = r"C:\Sydor Technologies\50KV_0C_1ms_cap0_f_00000001.raw" # "C:\Sydor Technologies\temptst_00000001.raw" # C:/mnt/raid/keckpad/set-yoram/run-2023-06-23-16-21-32/frames/2023-06-23-16-21-32_00000001.raw"
+    #back_filepath = r"C:\Sydor Technologies\50KV_0C_1ms_cap0_b_00000001.raw" # "/mnt/raid/keckpad/set-yoram/run-2023-06-23-16-23-00/frames/2023-06-23-16-23-00_00000001.raw"
 
+    fore_filepath = r"C:\temp\lbs1-013_00000001.raw"
+    back_filepath = r"C:\temp\lbs1-013_00000001.raw"
+    
     Fore = KeckFrame(fore_filepath)
     Back = KeckFrame(back_filepath)
 
-    while True:
+    for n in range( Fore.numImages):
         (mdF, dataF) = Fore.getFrame()
         (mdB, dataB) = Back.getFrame()
 
@@ -199,3 +229,4 @@ if __name__ == "__main__":
 
     Fore.close()
     Back.close()
+    

@@ -12,7 +12,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import sys
 import tkinter.filedialog as fd
-import findpeaks.findpeaks as fp   # https://erdogant.github.io/findpeaks/pages/html/index.html 
+#import findpeaks.findpeaks as fp   # https://erdogant.github.io/findpeaks/pages/html/index.html 
 import tifffile
 import math
 import copy
@@ -399,16 +399,16 @@ class Peak_Image:
         return total_dist
 
 # Set some of the geometric parameters
-delta_x_geo = [-(19.98/2 + 19.62) , (19.98/2)] # Distances in millimeters
+delta_x_geo = [-(20.23/2 + 19.62) , (20.23/2)] # Distances in millimeters
 delta_y_geo = [-(22 + 23.6/2.0), -(23.6/2.0), (23.6/2.0), (22 + 23.6/2.0)] # Distances in millimeters
     
 # The path of the peak-detected image
-maskPath = "F_forgeocal.tiff"
+maskPath = "xpad_corrections/geocal_full_mask.tiff"
 
 # Read in the image
 data = imageio.imread(maskPath)
 #-=-= Changed file
-data = imageio.imread("grid_pattern.png")
+data = imageio.imread("xpad_corrections/geocal_full_mask.tiff")
 
 print("Image Shape: {}".format(data.shape))
 print("Image Type: {}".format(data.dtype))
