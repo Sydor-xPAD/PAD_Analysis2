@@ -20,7 +20,7 @@ import copy
 ASIC_HEIGHT = 128
 ASIC_WIDTH  = 128
 
-PEAKS_EXPECTED = 81
+PEAKS_EXPECTED = 25
 
 ## A named structure for geocal parameters
 class AsicCorrections:
@@ -131,9 +131,9 @@ class Peak_Image:
     def __init__(self):
         self.ASIC_HEIGHT = 128    ##< The height of an ASIC in pixels
         self.ASIC_WIDTH = 128     ##< The width of an ASIC in pixels
-        self.PEAKS_EXPECTED = 81  ##< The number of points in the mask pattern
-        self.LENGTH = 9           ##< The number of points on a side of the mask pattern
-        self.NUM_COLS = 4         ##< The number of columns of ASICs
+        self.PEAKS_EXPECTED = 25  ##< The number of points in the mask pattern
+        self.LENGTH = 5           ##< The number of points on a side of the mask pattern
+        self.NUM_COLS = 8         ##< The number of columns of ASICs
         self.NUM_ROWS = 4         ##< The number of rows of ASICS
         self.peak_img = None      ##< The image of peaks
         self.neighbor_mask = np.array([[1,1,1],[1,1,1],[1,1,1]]); ##< The mask to force 8-connection in the neighborhood labeling
@@ -165,6 +165,7 @@ class Peak_Image:
         self.labeled_img = labeled_img
         self.num_objects = num_objects
 
+        imageio.imwrite("labeled_mask.png", labeled_img)
         return True
 
     ## Count the peaks in all the ASICs to verify correct number
@@ -182,6 +183,8 @@ class Peak_Image:
                 end_col = start_col + self.ASIC_WIDTH
                 curr_asic_pix = self.labeled_img[start_row:end_row,start_col:end_col]
                 distinct_val = set(curr_asic_pix.flat)
+                print(len(distinct_val))
+                print(distinct_val)
                 if not 0 in distinct_val:
                     print("ERROR: No background found in ASIC {},{}".format(row_idx, col_idx));
                     return False
@@ -399,13 +402,15 @@ class Peak_Image:
         return total_dist
 
 # Set some of the geometric parameters
-delta_x_geo = [-(20.23/2 + 19.62) , (20.23/2)] # Distances in millimeters
-delta_y_geo = [-(22 + 23.6/2.0), -(23.6/2.0), (23.6/2.0), (22 + 23.6/2.0)] # Distances in millimeters
+delta_x_geo = [-69.97, -69.97+19.62+20.48, 69.970-19.62-20.48-19.62, 69.97-19.62] # Distances in millimeters
+delta_y_geo = [-(22 + 22.9/2.0), -(22.9/2.0), (22.9/2.0), (22 + 22.9/2.0)] # Distances in millimeters
     
 # The path of the peak-detected image
-maskPath = "/home/iainm/temp/geocal_xpad020.tif"
-maskPath = "/home/iainm/work/airbox/gc_5ms_touchup_int.tif"
-
+maskPath = "/home/iainm/temp/airbox_dup.tiff"
+maskPath = "perfect_grid.tiff"
+maskPath = "rot_pinhole.tiff"
+maskPath = "ihep_geocal_verA.png"
+maskPath = "ihep_labeled_mask.png"
 # Read in the image
 data = imageio.imread(maskPath)
 #-=-= Changed file
@@ -438,7 +443,7 @@ else:
 geocal_img.calc_CoM();
 
 for row_idx in range(4):
-    for col_idx in range(4):
+    for col_idx in range(8):
         com_list = geocal_img.com_in_asic((row_idx, col_idx))
         print("ASIC {},{} has {} CoM.".format(row_idx, col_idx, len(com_list)))
 
@@ -478,13 +483,13 @@ asic_ctr = [];
 asic_grid = [];  # A list of peaks for each ASIC
 asic_fit_info = [];
 for asic_row in range(4):
-    for asic_col in range(4):
+    for asic_col in range(8):
         geocal_img.set_asic(asic_row, asic_col)
         res1 = minimize(geocal_img.calc_err, [1.0, 0, asic_row*128.0 + 0.5*128, asic_col*128.0+0.5*128], method='nelder-mead')
         #print(res1)
         res1_x = res1.x
-        my_grid = gen_grid(9, 11, res1_x[0], res1_x[1], offset=(res1_x[2], res1_x[3]))
-        curr_correction = AsicCorrections([9, 11, res1_x[0], res1_x[1], res1_x[2], res1_x[3]]);
+        my_grid = gen_grid(5, 11, res1_x[0], res1_x[1], offset=(res1_x[2], res1_x[3]))
+        curr_correction = AsicCorrections([5, 11, res1_x[0], res1_x[1], res1_x[2], res1_x[3]]);
         curr_correction.sq_err = res1.fun
         asic_fit_info.append(curr_correction)
         full_grid.extend(my_grid)
@@ -492,12 +497,12 @@ for asic_row in range(4):
 
 
 sm_list = []
-for sm_idx in range(8):
+for sm_idx in range(16):
     curr_submodule = Submodule(asic_fit_info[sm_idx*2], asic_fit_info[sm_idx*2+1])
-    asic_row = int(sm_idx / 2)
-    asic_col = (sm_idx % 2) * 2;
-    sm_row = int(sm_idx /2)
-    sm_col = sm_idx % 2
+    asic_row = int(sm_idx / 4)
+    asic_col = (sm_idx % 4) * 2;
+    sm_row = int(sm_idx /4)
+    sm_col = sm_idx % 4
     nom_ctr_y =  asic_row * ASIC_HEIGHT + int(ASIC_HEIGHT/2); # Half-way down an ASIC
     nom_ctr_x_left = asic_col * ASIC_WIDTH + int(ASIC_WIDTH/2); # 2 ASICs across per submodule, plus half-way across an ASIC
     nom_ctr_x_right = nom_ctr_x_left + ASIC_WIDTH;             # One ASIC to the right of the of the one just calculated
@@ -516,9 +521,9 @@ geo_offset_y = 9999             # Ibid
 geoparams_filename = "geocal_python.txt"
 geoparams_file = open(geoparams_filename, "w")
 for pass_idx in range(2):
-    for submodule_idx in range(8):
-        sm_row = int(submodule_idx / 2)
-        sm_col = int(submodule_idx % 2)
+    for submodule_idx in range(16):
+        sm_row = int(submodule_idx / 4)
+        sm_col = int(submodule_idx % 4)
         asic_idx = int(submodule_idx * 2); # Two ASICs per submodule; grab the left ASIC
         pixel_size = 0.150;     # Pixel size in mm
         curr_sm = sm_list[submodule_idx]
@@ -540,9 +545,19 @@ for pass_idx in range(2):
             if (gy < geo_offset_y):
                 geo_offset_y = gy
         else:
-            gx = gx - geo_offset_x + 3
-            gy = gy - geo_offset_y + 3
-            correction_string = "{:d}, {:d}, {}, {:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}, {:d}".format(submodule_idx, 160, "1A", avg_theta * 57.295, gx, gy, avg_mag, curr_sm.total_err, 0, 0)
+            gx = gx - geo_offset_x + 5
+            gy = gy - geo_offset_y + 5
+            # The submodules are labeled differently in the file than in the computation
+            cart_row = submodule_idx // 4 # Cartesian Row; four submodules
+            cart_col = submodule_idx % 4 # Cartesian Column
+            head_row = cart_row;         # Only four rows, so no change
+            head_col = cart_col % 2      # Two submodules per head row
+            head_num = 0                 # Start from head 0
+            head_sm = head_row * 2 + head_col # Simple offset
+            if (cart_col >= 2):
+                head_num = 1;   # Right half is second head
+            sm_idx_new = head_sm + 8*head_num # 8 submodules per head
+            correction_string = "{:d}, {:d}, {}, {:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}, {:d}".format(sm_idx_new, 160, "1A", avg_theta * 57.295, gx, gy, avg_mag, curr_sm.total_err, 0, 0)
             print(correction_string)
             geoparams_file.write(correction_string + "\n")
         
@@ -575,6 +590,7 @@ for row_idx in range(4):
         end_col = start_col + ASIC_WIDTH
         curr_asic = labeled_img[start_row:end_row,start_col:end_col]
         distinct_val = set(curr_asic.flat)
+        print(distinct_val)
         if not 0 in distinct_val:
             print("ERROR: No background found in quadrant.");
         num_peaks = len(distinct_val - set([0]))
