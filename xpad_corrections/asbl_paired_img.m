@@ -14,7 +14,7 @@ function paired_stats = asbl_paired_img(img_stack, pair_array, stat_fcn)
       if (numel(mean_img)) == 0
         stat_array(pair_idx+1) = NaN;
       else
-        stat_array(pair_idx+1) = stat_fcn(mean_img);
+        stat_array(pair_idx+1) = stat_fcn(mean_img, "omitnan");
       endif
     endfor
     paired_stats(stat_idx) = mean(stat_array);
