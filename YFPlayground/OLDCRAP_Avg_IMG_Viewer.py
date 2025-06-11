@@ -366,7 +366,7 @@ class dataObject:
 
 
       if self.bSaveFigs:
-         fig.savefig(self.fgFileName + "_TODO.png")
+         fig.savefig(self.fgFileName + ".png")
       
 
       

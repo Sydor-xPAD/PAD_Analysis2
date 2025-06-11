@@ -15,23 +15,7 @@
 # v 0.5 8/5/23 tkinter graphics
 # v 0.6 8/25/23 Allow two roi's
 
-
 # v 0.8 9/21/23 Allow IP differences in SRS boxes in same source
-# v 0.9 12/23/23 Some fixes to SMK_021 Testing
-
-# ***** git instructions *****
-#  If weirdness you may need this - but probably not.
-# git checkout HEAD -- plotlineout_oop.py   (any file name)
-# Normally just this to pull over changes from the cloud
-# git stash
-# git fetch
-# git checkout origin/yf-newcode
-
-# Places you may need to edit this code
-# Search for the word 'clipping'  where some datas are clipped fir aethetics
-#  The std dev plot is one such case.
-
-
 #
 # INSTRUCTIONS
 #
@@ -76,6 +60,8 @@ import time
 #from IPython.display import display
 import UI_utils
 
+import configparser
+
 
 #
 # Define some globals
@@ -100,18 +86,15 @@ class dataObject:
         self.MessageBeforeBackground = None
         self.MessageAfterBackground = None
         self.fcnPlotOptions = None
-        self.runVaryCommand = None
-        self.delayBetweenRuns = None
 
-        # below sets run specific values
         self.createObject()
-
         self.overwrite = True  # Set to true to delete previous runs
         self.bTakeData = bTakeData
         self.bAnalyzeData = bAnalyzeData
-
         self.TEST_ON_MAC = False
- 
+        #self.alternateTitle = None
+        self.runVaryCommand = None
+        self.delayBetweenRuns = None
 
         # Some routine use an SRS DG645 box:
         self.DG_IP_ADDR = "192.168.11.225"   # default
@@ -133,7 +116,6 @@ class dataObject:
         
 
         
-
         
 
 
@@ -196,7 +178,7 @@ class dataObject:
             
             self.roi = [90, 60, 10, 10]
             self.NCAPS = 3 # can this be pulled from file?
-            self.fcnToCall = calcLinearity
+            self.fcnToCall = plotLinearity
             self.roiSumNumDims = 3
             self.fcnPlot = prettyPlot
   
@@ -227,7 +209,7 @@ class dataObject:
 
             self.roi = [46, 92, 32, 20]
             self.NCAPS = 3 # can this be pulled from file?
-            self.fcnToCall = calcLinearity
+            self.fcnToCall = plotLinearity
             self.roiSumNumDims = 3
             self.fcnPlot = prettyPlot
 
@@ -260,7 +242,7 @@ class dataObject:
 
             self.roi = [0, 7*16, 128, 16]
             self.NCAPS = 8 # can this be pulled from file?
-            self.fcnToCall = calcEachCapLineout
+            self.fcnToCall = plotEachCapLineout
             self.roiSumNumDims = 4
             self.fcnPlot = prettyAllCapsInALine
 
@@ -275,12 +257,10 @@ class dataObject:
             self.MessageAfterBackground = "Plug the IR strobe trigger now"
             #self.setname = 'xpad-test1'
             self.setname = 'xpad-test2'
-            self.nFrames = 25  # frames Per Run
+            self.nFrames = 20  # frames Per Run
             # SRS is setup with PER of 100us, so 20 takes 2ms
             self.integrationTime = 3000000 # 3.0 millseconds
-            self.interframeTime = 200 
-            
-            self.varList = [200]
+            self.interframeTime = 500 
 
             # create a list of commands to send to hardware via mmcmd 
             unique_commands = [ 
@@ -290,23 +270,16 @@ class dataObject:
             
             self.runVaryCommand="InterFrame_NSec" 
             self.varRange = [500] 
-            self.runFrameCommand = self.usrFunction_DGCmd 
+            self.runFrameCommand = self.userFunction 
 
             self.innerVarCommand ="BURC" 
-            self.innerVarList = [i for i in range(1, self.nFrames+1)]
+            self.innerVarList = [i for i in range(1, self.nFrames)]
 
-            self.roi = [370,88,60,16]
+            self.roi = [4, 0*16, 128, 16]
             self.NCAPS = 8 # can this be pulled from file?
-            #self.fcnToCall = calcEachCapLineout
+            self.fcnToCall = plotEachCapLineout
             self.roiSumNumDims = 4
             self.fcnPlot = prettyAllCapsInALine    
-
-
-
-            #self.NCAPS = 3 # can this be pulled from file?
-            self.fcnToCall = calcLinearity
-            self.roiSumNumDims = 3
-            self.fcnPlot = prettyPlot
 
         # ****************************************************
         elif self.strDescriptor == "Move_IR_Along_Caps":
@@ -349,7 +322,7 @@ class dataObject:
 
             # ANALYZE PROPERTIES
             self.roi = [30, 71, 16, 4]
-            self.fcnToCall = calcLinearity
+            self.fcnToCall = plotLinearity
             self.roiSumNumDims = 4
 
             #self.roi = [4, 0*16, 128, 16]
@@ -372,7 +345,6 @@ class dataObject:
             # SRS Burst Mode: Off. B=A+1us.   Vary A to move pulse into each CAP exposure 
             # Set HW parameters
             self.TakeBG = True
-            
             self.MessageBeforeBackground = "Disconnect the IR strobe trigger now"
             self.MessageAfterBackground = "Plug the IR strobe trigger now"
             #self.setname = 'xpad-test-1pulse-per-cap'
@@ -380,7 +352,7 @@ class dataObject:
             # SRS is setup as single pulse. 
             #self.integrationTime = 100000 # 100 us
             #self.interframeTime = 500 
-            self.setname = 'xp-1p-walk_2roiD'
+            self.setname = 'xp-1p-walk_2roiA'
             # frames Per Run . Step 100ns steps from 700ns * 8 = 5800ns is 58 steps!
             # 50ns steps over 800ns is 16 steps * 8 =  128
             self.nFrames = 130  
@@ -401,7 +373,7 @@ class dataObject:
             #self.innerVarList = ["{:12.6e}".format(500e-9 + i*(100e-6 + 500e-9)) for i in range(0,self.nFrames)] 
 
             #  increment A by 100 ns steps.  700ns * 8 = 56 steps
-            #self.innerVarList = ["{:12.6e}".format( i*(100e-9)) for i in range(0,self.nFrames)] 
+            self.innerVarList = ["{:12.6e}".format( i*(100e-9)) for i in range(0,self.nFrames)] 
 
             #  increment A by 50 ns steps.  700ns * 8 = 56 steps
             self.innerVarList = ["{:12.6e}".format( i*(50e-9)) for i in range(0,self.nFrames)] 
@@ -410,8 +382,8 @@ class dataObject:
  
 
             # ANALYZE PROPERTIES
-            self.roi = [396, 87, 20, 16]
-            self.fcnToCall = calcLinearity
+            self.roi = [32,71,16,4]
+            self.fcnToCall = plotLinearity
             self.roiSumNumDims = 4
 
             #self.roi = [4, 0*16, 128, 16]
@@ -423,7 +395,7 @@ class dataObject:
             
             # nope self.fcnPlotOptions = {"waterfall":16000}
             # define a second ROI and plot that too.
-            self.roiB = [396,15,20,16] 
+            self.roiB = [60,72,16,4] 
         # ****************************************************
         elif self.strDescriptor == "Sweep_Integ1":               
             # How does the slope of dark frames change as we change the interframe1 time? 
@@ -449,55 +421,16 @@ class dataObject:
 
             self.roi = [0, 7*16, 128, 16]
             self.NCAPS = 8 # can this be pulled from file?
-            self.fcnToCall = calcEachCapLineout
+            self.fcnToCall = plotEachCapLineout
             self.roiSumNumDims = 4
             self.fcnPlot = prettyAllCapsInALine    
 
         # ****************************************************
         elif self.strDescriptor == "Cornell_Noise":               
             self.setname = 'xpad-cornell-noise'
-            self.nFrames = 100  # frames Per Run  
+            self.nFrames = 1000  # frames Per Run  
           
             # We ARE 'allowed' to change delay param in a run (!)
-            
-            self.integrationTime = 500 # 500ns
-            self.interframeTime = 200  # 200 ns 
-            
-            # create a list of commands to send to hardware via mmcmd 
-            unique_commands = [ 
-                "Cap_Select 0x1FF",  # 8 CAPS
-                "Trigger_Mode 2",     # HW trigger - Use External source to trigger.
-                "Exposure_Mode 0"
-            ]
-           
-            #self.runVaryCommand="Readout_Delay"
-            self.varList = [1,2]   # dummy values creates two runs. use one for F one for B
-            self.runFrameCommand = None
-            
-            self.innerVarList = []
-            self.innerVarCommand = "" 
-
-            # ANALYZE PROPERTIES
-            # roi is [X,Y, W, H ]
-            #self.roi = [10, 10, 118, 118] 
-            self.roi = [266, 10, 108, 108] 
-            self.roiB = [266+128, 10, 108, 108]
-            self.NCAPS = 8 # can this be pulled from file?
-            self.fcnToCall = calcBackgroundStats
-            self.roiSumNumDims = 3
-            self.fcnPlot = prettyPlot   
-            
-            self.newTitle = "Mean over ROI - Average all images"
-
-            # Note - there are two outputs. See self.secondAnalysis
-            self.fcnPlot2 = imagePlots
-            self.secondTitle = "std dev of each CAP"
-
-        
-         # ****************************************************
-        elif self.strDescriptor == "Cornell_Stability":               
-            self.setname = 'xpad-cornell-stability'
-            self.nFrames = 100  # frames Per Run  
             
             self.integrationTime = 500 # 500ns
             self.interframeTime = 200  # 200 ns 
@@ -509,33 +442,23 @@ class dataObject:
                 "Exposure_Mode 0"
             ]
            
-            #self.runVaryCommand="""
-            self.varList = [100,100,100,100,100] # fill with dummy values so it runs <n> times 
+            #self.runVaryCommand="Readout_Delay"
+            self.varList = [100]
             self.runFrameCommand = None
             self.innerVarList = []
             self.innerVarCommand = "" 
-            #
-            #
-            self.delayBetweenRuns = 5  # in seconds VARY THIS to see effect of time drift
-            #
-            #
 
             # ANALYZE PROPERTIES
-            self.roi = [10, 128 + 10, 108, 108]
-            ###self.roiB = [128+10, 10, 108, 108]
-            
+            self.roi = [10, 10, 118, 118]
             self.NCAPS = 8 # can this be pulled from file?
-
-            self.fcnToCall = calcLinearity
+            self.fcnToCall = calcBackgroundStats
             self.roiSumNumDims = 3
+            self.fcnPlot = prettyPlot   
+            #self.alternateTitle = "Mean over ROI - Average all images" 
+            self.newTitle = "Mean over ROI - Average all images"
 
-            self.fcnPlot = prettyPlot_TODO   
-            
-            self.newTitle = "Mean over ROI - Background subtracted. Using first run only"
-            self.computeBackgroundFromFirstRun = True
 
-            
-
+        
         else:
              raise Exception(" !Unknown string! ") 
 
@@ -665,8 +588,6 @@ class dataObject:
             self.runCount += 1
 
             if self.delayBetweenRuns:
-                if VERBOSE:
-                    print(f"--Delay {self.delayBetweenRuns} seconds --")
                 time.sleep( self.delayBetweenRuns )
 
 
@@ -682,23 +603,14 @@ class dataObject:
         """
         Take Data        
         """        
-
-        # Using an SRS DG645 box:
-        #IP_ADDR = "192.168.11.225"     # for keck 002
-        IP_ADDR = "192.168.11.101"      # for keck002 (LLNL)
-        c = comObject( 1, IP_ADDR )
+        c = comObject( 1, self.DG_IP_ADDR )
         r = c.tryConnect()
 
-        if self.runFrameCommand :
+        # Future me:  dg is used in userFunction to adjust SRS box at each run frame.
 
-            c = comObject( 1, self.DG_IP_ADDR )
-            r = c.tryConnect()
-
-            # Future me:  dg is used in userFunction to adjust SRS box at each run frame.
-
-            self.dg = DG645( c )
-            self.dg.counter = 0 # truly python hackery
-            self.dg.send("*CLS") # Clear errors
+        self.dg = DG645( c )
+        self.dg.counter = 0 # truly python hackery
+        self.dg.send("*CLS") # Clear errors
          
   
         # Create new Runs
@@ -731,11 +643,7 @@ class dataObject:
         repeat = 0
         title = ""
 
-
-        while True:
-            title = ""
-            runBase = 1
-            backFile = None
+        while True:        
 
             for runnum in range(NRUNS):
                 runname = f"run_{runnum+1}"
@@ -771,22 +679,21 @@ class dataObject:
                 if self.runVaryCommand:
                     title = f"{self.runVaryCommand} {self.varList}"
 
-            
-            #ENDFOR
-            if hasattr(self, "newTitle"):
-                title = self.newTitle + ":" + title
+
+                if hasattr(self, "newTitle"):
+                    title = self.newTitle + ":" + title
+
 
             
-                
             #
             #  fcnPlot is the function to generate plot. It is defined in the IF's above.
             #
             self.fcnPlot (roiSum, title, options = self.fcnPlotOptions)
 
             if hasattr(self, "roiB"):
-                # repeat the analsys with a second roi
+                # repeat the analysis with a second ROI
                 repeat += 1  # 0 --> 1
-                self.roi = self.roiB # re define the roi
+                self.roi = self.roiB # redefine the ROI
                 self.newTitle = "roiB"
                 if repeat >= 2:
                     break
@@ -794,8 +701,14 @@ class dataObject:
                 break            
         # WHILE LOOP
 
-        plt.show()
-
+        
+        if hasattr(self, 'fcnPlot2'):
+            self.fcnPlot2 ( self, self.secondAnalysis, title = self.secondTitle ) 
+            
+            
+        plt.show()    
+        
+        
 
 
 
@@ -819,18 +732,13 @@ def plotROI(cap, zSX, zSY, nTap, W, H):
     for fIdex in range( back.numImages ):
         (mdB,dataB) = back.getFrame()
         #  return frameParms, lengthParms, frameMeta, capNum, data, frameNum, integTime, interTime
-         # 12/27/23 oh oh mdb.capNum appears to be incorrect!
-        cnum = fIdex % 8
-        backStack[ mdB.frameNum-1,cnum,:,:] += np.resize(dataB,[512,512])
+        backStack[ mdB.frameNum-1,(mdB.capNum-1)%8,:,:] += np.resize(dataB,[512,512])
 
     avgBack = backStack/( back.numImages/8.0)
 
     for fIdex in range( fore.numImages):
         (mdF,dataF) = fore.getFrame()
-        # 12/27/23 oh oh mdb.capNum appears to be incorrect!
-        cnum = fIdex % 8
-
-        foreStack[mdF.frameNum-1,cnum,:,:] += np.resize(dataF,[512,512])
+        foreStack[mdF.frameNum-1,(mdF.capNum-1)%8,:,:] += np.resize(dataF,[512,512])
 
     #standDev = np.zeros((8,512,512),dtype=np.double)
     DiffStack = foreStack-backStack
@@ -867,12 +775,11 @@ def imagePlots(dobj, img, title):
     indexVal = 0
     c = 0
     fig,ax = plt.subplots(2,4)
-    # Set the main title for the entire figure
-    fig.suptitle(title)
 
-    #  CLIPPING  If std dev plot appears at a fixed value it is becauyse it is clipped here
-    vmin= 0
-    vmax = 40
+    plt.title(title) 
+
+    vmin= -20
+    vmax = 20
 
     for indexVal in range(8):
         indexRow = int(indexVal/4) 
@@ -897,6 +804,12 @@ def imagePlots(dobj, img, title):
     plt.tight_layout()
 
     
+    
+
+    
+        
+            
+  
 
 #
 # Plot <n> caps. Plot mean of ROI versus frame number
@@ -936,51 +849,6 @@ def prettyPlot(data, title, options = None):
     #plt.show(block= True) 
 
 
-
-#
-# Plot <n> caps. Plot mean of ROI versus frame number
-#  data is 3 dimensions: data should be [nRuns, nFrames, nCaps]
-# like prettyplot, but each run is appended in the list along the x axis
-def prettyPlot_TODO(data, title, options = None):
-    nruns = len(data)
-    ncaps = len(data[0,0] )
-    fig, ax = plt.subplots()
-    #plt.figure(1)
-
-    for n in range(nruns):    
-        nframes = len(data [0])
-        for c in range(ncaps):
-
-            x = .5 +.5*(n / (nruns))
-            if c%5 == 0:
-                clr = (x,0,0)
-            elif c%5 == 1:
-                clr = (x,x,0)
-            elif c%5 == 2:
-                clr = (0,x,0)
-            elif c%5 == 3:
-                clr = (0,x,x)
-            elif c%5 == 4:
-                clr = (0,0,x)
-
-            lbl = ""
-            if n == 0:
-                lbl = f"Cap:{c+1}"   
-
-            xrange = range(n*nframes, (n+1)*nframes, 1)     
-
-            ax.plot( xrange, data[n,:,c], 
-                color=clr, label = lbl )
-
-
-    plt.legend()
-    plt.xlabel('N')
-    plt.ylabel('mean (ADU)')
-    plt.title( title )
-    ax.yaxis.set_minor_locator( MultipleLocator(1000))
-
-    
-    #plt.show(block= True) 
 
 #
 #   TODO
@@ -1095,9 +963,9 @@ def calcBackgroundStats(dobj, data=None, runnum = 0):
     ncaps = dobj.NCAPS
     ave = np.zeros((8,512,512),dtype=np.double)
     imageCount = 0
-    
+
     loopAgain = False
-    raf = None   # Read Additional Files - needed when taking more than 1000 frames.
+    raf = None
     runBase = 1
 
     try:
@@ -1107,7 +975,6 @@ def calcBackgroundStats(dobj, data=None, runnum = 0):
 
     loopAgain = True
 
-    # Special case when more than 1000 frames are taken, we need to loop over multiple files. 
     while loopAgain:
         for fIdex in range( fore.numImages):
             (mdF,dataF) = fore.getFrame()
@@ -1115,12 +982,10 @@ def calcBackgroundStats(dobj, data=None, runnum = 0):
                 (mdB,dataB) = back.getFrame()
                 dataF = dataF - dataB #  Put F-B in F as a kludge.
 
-            frameNum = (runBase-1  + fIdex) // ncaps  # not a typo "//" is integer division 
+            frameNum = fIdex // ncaps  # not a typo "//" is integer division 
             dataArray = np.resize(dataF,[512,512])
-             # 12/27/23 oh oh mdb.capNum appears to be incorrect!
-            cnum = fIdex % 8
-            dobj.foreStack[frameNum,cnum,:,:] = dataArray
-            ave[ cnum,:,:] += dataArray
+            dobj.foreStack[frameNum,(mdF.capNum-1) % ncaps,:,:] = dataArray
+            ave[ (mdF.capNum-1) % ncaps,:,:] += dataArray
             imageCount += 1
 
         if raf:
@@ -1146,8 +1011,6 @@ def calcBackgroundStats(dobj, data=None, runnum = 0):
         else:
             loopAgain = False
             break  # EXIT WHILE
-
-        
         
     # WHILE } 
 
@@ -1162,7 +1025,7 @@ def calcBackgroundStats(dobj, data=None, runnum = 0):
     endPixY = startPixY + roi[3]
     startPixX = roi[0]
     endPixX = startPixX + roi[2]
-    nImages =  imageCount // ncaps  # not a typo "//" is integer division 
+    nImages =  fore.numImages // ncaps  # not a typo "//" is integer division 
     
 
     for fn in range( nImages ): 
@@ -1172,76 +1035,16 @@ def calcBackgroundStats(dobj, data=None, runnum = 0):
             data[runnum, fn,cn] = V
             #print( fn, cn, roiSum)
 
-
-    if not hasattr(dobj, "secondAnalysis"):
-        # Secondary analysis here?
-        # We want RMS of each pixel.
-        rmsPixels = np.zeros((8,512,512),dtype=np.double) # 8 CAPS, imageH, imageW
-        
-        print("--- this takes a long time ~ 30 seconds ---")
-
-        img2 = np.zeros( (nImages, ncaps, 512, 512), dtype = np.double)
-        for cn in range (ncaps):
-            for fn in range( nImages ): 
-                img2[fn, cn, :, :] = dobj.foreStack[fn, cn, :, :] - ave[cn, :, :]
-            rmsPixels[cn, :, :] = np.std( img2[:, cn, :, :], axis = 0 )
-
-        dobj.secondAnalysis = rmsPixels
-    
-    
-
-    return data
-
-def calcMeanVersusTime(dobj, data=None, runnum=0):
-    """
-    
-    """
-    if hasattr(dobj, "back"):
-        back = dobj.back
-
-    fore = dobj.fore
-    roi = dobj.roi
-    ncaps = dobj.NCAPS
-
-
-    for fIdex in range( fore.numImages):
-        (mdF,dataF) = fore.getFrame()
-        if back:
-            (mdB,dataB) = back.getFrame()
-            dataF = dataF - dataB #  Put F-B in F as a kludge.
-
-        frameNum = fIdex // ncaps  # not a typo "//" is integer division 
-        dataArray = np.resize(dataF,[512,512])
-        # 12/27/23 oh oh mdb.capNum appears to be incorrect!
-        cnum = fIdex % 8
-
-        dobj.foreStack[frameNum,cnum,:,:] = dataArray
-
-    #  [ Frame, Cap, Y , X ] 
-    
-    # ROI is [X,Y,W,H]
-    startPixY = roi[1]
-    endPixY = startPixY + roi[3]
-    startPixX = roi[0]
-    endPixX = startPixX + roi[2]
-    nImages =  fore.numImages // ncaps  # not a typo "//" is integer division 
-    
-
-    for fn in range( nImages ): 
-        for cn in range (ncaps):
-            data[runnum, fn,cn] = np.average( dobj.foreStack[fn, cn, startPixY:endPixY, startPixX:endPixX] )
-            #print( fn, cn, roiSum)
-
     return data
 
 
-
-def calcLinearity(dobj, data=None, runnum = 0):
-
+def plotLinearity(dobj, data=None, runnum = 0):
     """
+   
+    title 
     data is [#run, #frame, #cap]
     runnum increments from 0 to #run-1
-    NOTE - Data is stored in array data.
+    NOTE - Data is NOT plotted, rather data is storted in array data.
     stores the average value over the ROI.
     """
    
@@ -1263,19 +1066,10 @@ def calcLinearity(dobj, data=None, runnum = 0):
 
         frameNum = fIdex // ncaps  # not a typo "//" is integer division 
         dataArray = np.resize(dataF,[512,512])
-        # 12/27/23 oh oh mdb.capNum appears to be incorrect!
-        cnum = fIdex % 8
-        dobj.foreStack[frameNum,cnum,:,:] = dataArray
+        dobj.foreStack[frameNum,(mdF.capNum-1) % ncaps,:,:] = dataArray
 
-    #  [ Frame, Cap, Y , X ] # TODO: check Y,X is correct
+    #  [ Frame, Cap, Y , X ] 
     
-
-    if hasattr(dobj, "backFromFirstRunAve"):
-        for fIdex in range( fore.numImages):
-            frameNum = fIdex // ncaps
-            c = fIdex % ncaps
-            dobj.foreStack[frameNum,c,:,:] -=  dobj.backFromFirstRunAve[c, :, :]
-        
     # rio is [X,Y,W,H]
     startPixY = roi[1]
     endPixY = startPixY + roi[3]
@@ -1292,12 +1086,12 @@ def calcLinearity(dobj, data=None, runnum = 0):
     return data
 
 
-def calcEachCapLineout(dobj,  data=None, runnum = 0):
+def plotEachCapLineout(dobj,  data=None, runnum = 0):
     """
-    data is [#run, #frame, #cap] = [list of data]
+    data is [#run, #frame, #cap]
     runnum increments from 0 to #run-1
-    NOTE - Data is stored in array data. Each element [r,f,c] is a list of values.
-    
+    NOTE - Data is NOT plotted, rather data is storted in array data.
+    stores the average value over the ROI.
     """
    
     back = None
@@ -1315,13 +1109,10 @@ def calcEachCapLineout(dobj,  data=None, runnum = 0):
             dataF = dataF - dataB #  Put F-B in F as a kludge.
 
         frameNum = fIdex // ncaps  # not a typo "//" is integer division 
-        # 12/27/23 oh oh mdb.capNum appears to be incorrect!
-        cnum = fIdex % 8
-
         dataArray = np.resize(dataF,[512,512])
-        dobj.foreStack[frameNum,cnum,:,:] = dataArray
+        dobj.foreStack[frameNum,(mdF.capNum-1) % ncaps,:,:] = dataArray
 
-    #  [ Frame, Cap, Y , X ] # TODO: check Y,X is correct
+    #  [ Frame, Cap, Y , X ] 
     
     # rio is [X,Y,W,H]
     startPixY = roi[1]
@@ -1361,10 +1152,10 @@ def defineListOfTests():
     lot.append( ("Move_IR_Along_Caps_2ROIS", "SRS single bright pulse, moves from cap1" \
         "to cap 8. Has a bright ROI and a dark ROI.") )
     
-    lot.append( ("Cornell_Noise", "Take 100 images x 8CAPS. Compute RMS from ave.") )
-    lot.append( ("Cornell_Stability", "Take 1000 images x 8CAPS. Compute Mean over time. "
-                  "Set self.delayBetweenRuns in units of seconds.") )
-   
+    lot.append( ("Cornell_Noise", "Take 1000 images x 8CAPS. Compute RMS from ave.") )
+    lot.append( ("Cornell_Stability", "Take 1000 images x 8CAPS. Compute Mean over time.") )
+    
+    
     return lot
 
 
