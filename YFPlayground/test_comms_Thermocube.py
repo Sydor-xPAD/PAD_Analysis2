@@ -77,7 +77,7 @@ def Start_Monitor_Loop( chiller ):
 
       else:
          print("[MODAL]: Can not communicate with Chiller.  Please verify Chiller is ON and connected.")
-         indicato_int = "red"
+         indicator_int = "red"
          
          
       
@@ -180,7 +180,7 @@ if __name__ == "__main__":
    if LINUX:
       chiller = ThermoCube("/dev/ttyUSB0")  # Replace with your actual port
    elif WINDOWS:
-      chiller = ThermoCube("COM4:")  # Replace with your actual port
+      chiller = ThermoCube("COM4")  # Replace with your actual port
       
    
    if 1:
