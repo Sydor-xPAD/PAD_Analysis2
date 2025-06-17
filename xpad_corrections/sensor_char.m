@@ -7,8 +7,10 @@ fclose(cfg_file);
 
 do_dark_analysis = false;
 do_dark_current = false;
-do_read_noise = false;
+do_read_noise = true;
 do_flatness = false;
+
+full_asbl_data = {};
 
 for cfg_idx = 1:size(cfg_list)(1)
   curr_name = strtrim(cfg_list{cfg_idx, 1}{1,1});
@@ -132,9 +134,15 @@ if do_read_noise
 
   ## Create the pairs of stacks
   sub_dark_stack = raw_dark_stack(:,:,1:(num_dark_frames/2))-raw_dark_stack(:,:,(num_dark_frames/2+1):num_dark_frames);
+  sub_half_stack = raw_dark_stack(:,:,1:(num_dark_frames/2))-mean(raw_dark_stack(:,:,(num_dark_frames/2+1):num_dark_frames),3);
 
   total_read_noise = zeros(num_asics, num_caps); #Read noise including bounce
-  seprate_read_noise = zeros(num_asics, num_caps);  #Read noise exlcuding bounce
+  separate_read_noise = zeros(num_asics, num_caps);  #Read noise exlcuding bounce
+
+  total_read_noise_half = zeros(num_asics, num_caps);
+  separate_read_noise_half = zeros(num_asics, num_caps);
+  bounce_stats = zeros(num_asics, num_caps);
+  bounce_err = zeros(num_asics, num_caps, 2);
   
   for cap_idx=1:num_caps
     for asic_idx=1:num_asics
@@ -142,22 +150,43 @@ if do_read_noise
       base_title = sprintf("Noise Analysis - Cap %i ASIC %02i", cap_idx, asic_idx);
       curr_margin = calc_bounds(asic_idx-1, img_desc);
       curr_stack = sub_dark_stack(curr_margin.y_margin_min:curr_margin.y_margin_max, curr_margin.x_margin_min:curr_margin.x_margin_max, cap_idx:num_caps:(num_dark_frames/2));
+      curr_stack_half = sub_half_stack(curr_margin.y_margin_min:curr_margin.y_margin_max, curr_margin.x_margin_min:curr_margin.x_margin_max, cap_idx:num_caps:(num_dark_frames/2));
+      bounce_stack = raw_dark_stack(curr_margin.y_margin_min:curr_margin.y_margin_max, curr_margin.x_margin_min:curr_margin.x_margin_max, cap_idx:num_caps:(num_dark_frames/2));
 
+      bounce_array = calc_bounce_hist(bounce_stack);
+      bounce_stats(asic_idx, cap_idx) = std(bounce_array);
+      bounce_mean(asic_idx, cap_idx) = mean(bounce_array);
+      bounce_sort = sort(bounce_array);
+      bounce_err(asic_idx, cap_idx, 1) = bounce_sort(floor(length(bounce_sort)*0.25));
+      bounce_err(asic_idx, cap_idx, 2) = bounce_sort(floor(length(bounce_sort)*0.75));
+      
       total_read_noise(asic_idx, cap_idx) = calc_read_noise(curr_stack, 1);
       separate_read_noise(asic_idx, cap_idx) = calc_read_noise(curr_stack, 0);
+
+      total_read_noise_half(asic_idx, cap_idx) = calc_read_noise(curr_stack_half, 1);
+      separate_read_noise_half(asic_idx, cap_idx) = calc_read_noise(curr_stack_half, 0);
     endfor
   endfor
 
 
   csv_filename{1} = "read_noise_bounce.csv";
   csv_filename{2} = "read_noise_nobounce.csv";
+  csv_filename{3} = "read_noise_bounce_half.csv";
+  csv_filename{4} = "read_noise_nobounce_half.csv";
 
-  for csv_idx=1:2
+  for csv_idx=1:4
     if csv_idx==1
       noise_var = total_read_noise;
+    elseif csv_idx==2
+      noise_var = separate_read_noise/sqrt(2);
+    elseif csv_idx==3
+      noise_var = total_read_noise_half;
     else
-      noise_var = separate_read_noise;
+      noise_var = separate_read_noise_half;
     endif
+
+    ## XXX TODO Do after comparison
+    # noise_var = noise_var/sqrt(2);
     
     csv_file = fopen(csv_filename{csv_idx}, "w");
 
@@ -182,7 +211,7 @@ if do_read_noise
 endif
 
 if do_flatness
-  [raw_dark_stack, num_dark_frames] = read_xpad_image(short_dark_image_filename, sensor_bpp, offset, gap, image_width, image_height, max_frames);
+  [raw_dark_stack, num_dark_frames] = read_xpad_image(long_dark_image_filename, sensor_bpp, offset, gap, image_width, image_height, max_frames);
   
   raw_dark_stack = raw_dark_stack(:,:,(num_skip_frames+1):num_dark_frames);
   num_dark_frames = num_dark_frames - num_skip_frames;
@@ -215,6 +244,16 @@ if do_flatness
   endfor
   fclose(ff_file);
 
+  ## Do the bad pixel calculation based off of the flatfield map
+  bad_pixel_idx = find(isnan(flat_map));
+  for frame_idx = 1:num_bright_frames
+    curr_slice = bg_sub_image(:,:,frame_idx);
+    curr_slice(bad_pixel_idx) = nan;
+    bg_sub_image(:,:,frame_idx) = curr_slice;
+  endfor
+  
+  
+  
   asic_mean_before = zeros(num_asics, num_caps);
   asic_std_before = zeros(num_asics, num_caps);
   max_pairs = floor((num_bright_frames/num_caps)/2);
@@ -233,8 +272,8 @@ if do_flatness
       curr_stack = bg_sub_image(curr_margin.y_margin_min:curr_margin.y_margin_max, curr_margin.x_margin_min:curr_margin.x_margin_max, cap_idx:num_caps:num_bright_frames);
       ff_asic = flat_map(curr_margin.y_margin_min:curr_margin.y_margin_max, curr_margin.x_margin_min:curr_margin.x_margin_max, cap_idx);
 
-      pair_std = asbl_paired_img(curr_stack, pair_array, @nanstd);
-      pair_mean = asbl_paired_img(curr_stack, pair_array, @nanmean);
+      pair_std = asbl_paired_img(curr_stack, pair_array, @std);
+      pair_mean = asbl_paired_img(curr_stack, pair_array, @mean);
 
       [noise_coeff, pred_noise] = calc_noise_reg(pair_array, pair_std);
       fixed_noise_x = [pair_array(1) pair_array(numel(pair_array))];
@@ -248,9 +287,10 @@ if do_flatness
       print(chart_name)
 
       noise_stack = 10*log10(curr_stack/pair_mean(1));
-      new_std = asbl_paired_img(noise_stack, pair_array, @nanstd);
+      new_std = asbl_paired_img(noise_stack, pair_array, @std);
       new_std = 10.^(new_std/10)*100-100;
       plot(pair_array, new_std, 'r-*');
+      full_asbl_data{asic_idx} = [pair_array; new_std];
       title(["Gain Noise " coord_title]);
       xlabel("# Pairs")
       ylabel("Noise (%)")
@@ -263,9 +303,9 @@ if do_flatness
         flattened_asic(:,:,frame_idx) = flattened_asic(:,:,frame_idx).*ff_asic;
       endfor
 
-      flat_mean = asbl_paired_img(flattened_asic, pair_array, @nanmean);
+      flat_mean = asbl_paired_img(flattened_asic, pair_array, @mean);
       flattened_noise = 10*log10(flattened_asic/flat_mean(1));
-      flat_std = asbl_paired_img(flattened_noise, pair_array, @nanstd);
+      flat_std = asbl_paired_img(flattened_noise, pair_array, @std);
       flat_std = 100*10.^(flat_std/10)-100;
 
       plot(pair_array, new_std, "b-*;Before Flatfield;", pair_array, flat_std, "r-s;After Flatfield;")
@@ -276,6 +316,27 @@ if do_flatness
       print(chart_name);
     endfor
   endfor
+
+  figure(2)
+  title("Flatness By ASIC")
+  xlabel("# Pairs")
+  ylabel("Noise (%)")
+  color_array = {"b-","r-","g-", "v-"};
+  symbol_array = {"^", "s", "*", "v"};
+  hold off;
+  for asic_idx=1:16
+    color_idx = floor((asic_idx-1)/4)+1;
+    symbol_idx = mod(asic_idx, 4)+1;
+    curr_graph_key = sprintf("%s%s;ASIC %i;", color_array{color_idx}, symbol_array{symbol_idx}, asic_idx-1);
+    plot(full_asbl_data{asic_idx}(1,:), full_asbl_data{asic_idx}(2,:), curr_graph_key);
+    hold on
+  endfor
+  title("Flatness By ASIC")
+  xlabel("# Pairs")
+  ylabel("Noise (%)")
+  hold off
+
+  
 endif
 
       
