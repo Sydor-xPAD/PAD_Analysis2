@@ -55,6 +55,8 @@ for cfg_idx = 1:size(cfg_list)(1)
     readnoise_image_filename = curr_val;
   elseif strcmp(curr_name, "bpp")
     sensor_bpp = str2double(curr_val);
+  elseif strcmp(curr_name, "zero_image_filename")
+    zero_image_filename = curr_val;
   endif
 endfor
 
@@ -63,9 +65,10 @@ num_skip_frames = num_skip_images * num_caps;
 
 
 ## Compute the actual IQR-thresholds from the z-score thresholds
-hot_iqr_thresh = (hot_z_thresh-0.67)/1.34;
-dark_iqr_thresh = (dark_z_thresh-0.67)/1.34;
-
+#hot_iqr_thresh = (hot_z_thresh-0.67)/1.34;
+#dark_iqr_thresh = (dark_z_thresh-0.67)/1.34;
+hot_iqr_thresh = hot_z_thresh;
+dark_iqr_thresh = dark_z_thresh;
 ## Load in the preliminary bad pixels
 prelim_bad_mask = imread(prelim_bad_filename);
 
@@ -84,6 +87,10 @@ prelim_bad_mask = prelim_bad_mask != 0;
 
 ## Load in the the dark image
 ## Load in the whole stack...
+[raw_zero, num_frames] = read_xpad_image(zero_image_filename, sensor_bpp, offset, gap, img_width, img_height);
+[zero_img, num_frames] = clip_avg_stack(raw_zero, num_skip_frames, num_caps);
+clear raw_zero;
+
 [raw_dark, num_frames] = read_xpad_image(dark_image_filename, sensor_bpp, offset, gap, img_width, img_height);
 ## ...and process
 [dark_img, num_frames] = clip_avg_stack(raw_dark, num_skip_frames, num_caps);
@@ -105,9 +112,13 @@ for cap_idx = 1:num_caps
   curr_slice = bright_img(:,:,cap_idx);
   curr_slice(find(prelim_bad_mask)) = NaN;
   bright_img(:,:,cap_idx) = curr_slice;
+  curr_slice = zero_img(:,:,cap_idx);
+  curr_slice(find(prelim_bad_mask)) = NaN;
+  zero_img(:,:,cap_idx) = curr_slice;
 endfor
 
 ## Now NaN out the bad asics
+zero_image = apply_bad_asic(bad_asics, asic_height, asic_width, zero_img);
 dark_image = apply_bad_asic(bad_asics, asic_height, asic_width, dark_img);
 bright_image = apply_bad_asic(bad_asics, asic_height, asic_width, bright_img);
 clear dark_img
@@ -118,6 +129,9 @@ if num_caps == 1
   temp_image(:,:,1) = dark_image;
   temp_image(:,:,2) = dark_image;
   dark_image = temp_image;
+  temp_image(:,:,1) = zero_image;
+  temp_iamge(:,:,2) = zero_image;
+  zero_image = temp_image;
 endif
 
 ## Diff the images
@@ -136,13 +150,16 @@ masked_total_bad = [];
 hot_bad = [];
 cold_bad = [];
 for curr_thresh=hot_iqr_thresh
-  [hot_img, pix_thresh] = thresh_image(diff_image, 0, curr_thresh, asic_width, asic_height);
+  [hot_img, pix_thresh] = thresh_gain_high(dark_image-zero_image, curr_thresh, asic_width, asic_height);
+  #[hot_img, pix_thresh] = thresh_image(bright_image-dark_image, 0, curr_thresh, asic_width, asic_height);
   hot_filt = [hot_filt pix_thresh];
 
   hot_total = sum(hot_img, 3);
-  out_name = sprintf("hot_iqr_%.4f.pgm", 1.34*curr_thresh+0.67); #Switch to Z
+#out_name = sprintf("hot_iqr_%.4f.pgm", 1.34*curr_thresh+0.67); #Switch to Z
+  out_name = sprintf("hot_iqr_%.4f.pgm", curr_thresh); #Switch to Z
   pgm_write(hot_total, out_name);
-  out_name = sprintf("hot_iqr_%.4f_stack.pgm", 1.34*curr_thresh+0.67);
+ #out_name = sprintf("hot_iqr_%.4f_stack.pgm", 1.34*curr_thresh+0.67);
+  out_name = sprintf("hot_iqr_%.4f_stack.pgm", curr_thresh);
   pgm_write_stack(hot_img, out_name, num_caps);
   hot_bad = [hot_bad sum(reshape(isnan(hot_total),1,[]))];
 endfor

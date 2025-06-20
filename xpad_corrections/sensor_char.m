@@ -247,6 +247,9 @@ if do_flatness
   ## Do the bad pixel calculation based off of the flatfield map
   bad_pixel_idx = find(isnan(flat_map));
   for frame_idx = 1:num_bright_frames
+    cap_idx = mod(frame_idx-1, num_caps)+1;
+    curr_ff = flat_map(:,:,cap_idx);
+    bad_pixel_idx = find(isnan(curr_ff));
     curr_slice = bg_sub_image(:,:,frame_idx);
     curr_slice(bad_pixel_idx) = nan;
     bg_sub_image(:,:,frame_idx) = curr_slice;
