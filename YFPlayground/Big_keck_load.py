@@ -59,8 +59,13 @@ class KeckFrame:
             self.dtype = np.dtype('int32')
             self.footerSize = 2048 - 256
             self.readExtraByte = True
-
-
+            
+            
+        elif imgType == 'CORRECTED':
+            self.oneImageSize = (4256+532*612*8) # MM
+            self.dtype = np.dtype('double')
+            self.footerSize = 4256 - 256
+            self.readExtraByte = False  
         self.open()
         
 
@@ -132,8 +137,15 @@ class KeckFrame:
         footer = self.dataFile.read(self.footerSize) #read footer bytes 
         if self.imgType =='MMPAD':
             footerB = struct.unpack("<448I",footer) #  read into list of uint32
+            # ie: (2048-256)/4
+        elif self.imgType == 'CORRECTED':
+            footerB = struct.unpack("<1000I",footer) #  read into list of uint32
+            # Use twice the length using 32bit Int, rather than doubles to not break the conversion routines.  
+            # ie: (4256-256)/8
         else:            
             footerB = struct.unpack("<384H",footer) #  read into list of uint16
+            # ie (1024-256)/2
+            
         
 
         # DEBUG

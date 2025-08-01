@@ -14,7 +14,7 @@
 #  most data runs where one thing is varied per Run and another thing is varied per frame.
 # v 0.5 8/5/23 tkinter graphics
 # v 0.6 8/25/23 Allow two roi's
-# v 0.7 9/18/23 Add new routines for Cornell testing
+
 
 # v 0.8 9/21/23 Allow IP differences in SRS boxes in same source
 # v 0.9 12/23/23 Some fixes to SMK_021 Testing
@@ -30,6 +30,7 @@
 # Places you may need to edit this code
 # Search for the word 'clipping'  where some datas are clipped fir aethetics
 #  The std dev plot is one such case.
+
 
 #
 # INSTRUCTIONS
@@ -75,8 +76,6 @@ import time
 #from IPython.display import display
 import UI_utils
 
-import configparser
-
 
 #
 # Define some globals
@@ -110,8 +109,9 @@ class dataObject:
         self.overwrite = True  # Set to true to delete previous runs
         self.bTakeData = bTakeData
         self.bAnalyzeData = bAnalyzeData
-        self.TEST_ON_MAC = True ####  Debug!  False
-        
+
+        self.TEST_ON_MAC = False
+ 
 
         # Some routine use an SRS DG645 box:
         self.DG_IP_ADDR = "192.168.11.225"   # default
@@ -133,6 +133,7 @@ class dataObject:
         
 
         
+
         
 
 
@@ -534,6 +535,7 @@ class dataObject:
             self.computeBackgroundFromFirstRun = True
 
             
+
         else:
              raise Exception(" !Unknown string! ") 
 
@@ -681,6 +683,12 @@ class dataObject:
         Take Data        
         """        
 
+        # Using an SRS DG645 box:
+        #IP_ADDR = "192.168.11.225"     # for keck 002
+        IP_ADDR = "192.168.11.101"      # for keck002 (LLNL)
+        c = comObject( 1, IP_ADDR )
+        r = c.tryConnect()
+
         if self.runFrameCommand :
 
             c = comObject( 1, self.DG_IP_ADDR )
@@ -721,7 +729,7 @@ class dataObject:
        
         roiSum = None
         repeat = 0
-        
+        title = ""
 
 
         while True:
@@ -735,35 +743,22 @@ class dataObject:
                     foreFile = f'/Users/yoram/Sydor/keckpad/30KV_1.5mA_40ms_f_00015001.raw' # check not sure...
                     
                 else:
-                    foreFile = f'/mnt/raid/keckpad/set-{setname}/run-{runname}/frames/{runname}_{runBase:08d}.raw'
+                    foreFile = f'/mnt/raid/keckpad/set-{setname}/run-{runname}/frames/{runname}_00000001.raw'
                 
                 self.fore = BKL.KeckFrame( foreFile )
                 if self.TakeBG:
-                    backFile = f'/mnt/raid/keckpad/set-{setname}/run-back/frames/back_{runBase:08d}.raw'
+                    backFile = f'/mnt/raid/keckpad/set-{setname}/run-back/frames/back_00000001.raw'
                     self.back =  BKL.KeckFrame( backFile )
 
 
+
                 numImagesF = self.fore.numImages 
-
-                if self.nFrames  * self.NCAPS > 1000:
-                    # we need to read mutiple raw files - only 1000 per file.
-                    self.readAdditionalFiles = {
-                        "baseFilenameF" : foreFile[:-12], "nJumpBy":1000,
-                        "baseFilenameB" : backFile[:-12] if backFile else None
-                    }
-                    numImagesF = self.nFrames  * self.NCAPS
-
-
-                
                 if roiSum is None:
                     if self.roiSumNumDims == 3:
                         roiSum = np.zeros((NRUNS,numImagesF // NCAPS, NCAPS),dtype=np.double)
                     elif self.roiSumNumDims == 4:
                         roiSum = np.zeros((NRUNS,numImagesF // NCAPS, NCAPS, self.roi[2]),dtype=np.double)
 
-
-                            
-                        
 
                 # create global big arrays to hold images
                 self.foreStack = np.zeros((numImagesF // NCAPS, NCAPS,512,512),dtype=np.double)
@@ -789,9 +784,9 @@ class dataObject:
             self.fcnPlot (roiSum, title, options = self.fcnPlotOptions)
 
             if hasattr(self, "roiB"):
-                # repeat the analysis with a second ROI
+                # repeat the analsys with a second roi
                 repeat += 1  # 0 --> 1
-                self.roi = self.roiB # redefine the ROI
+                self.roi = self.roiB # re define the roi
                 self.newTitle = "roiB"
                 if repeat >= 2:
                     break
@@ -799,14 +794,8 @@ class dataObject:
                 break            
         # WHILE LOOP
 
-        
-        if hasattr(self, 'fcnPlot2'):
-            self.fcnPlot2 ( self, self.secondAnalysis, title = self.secondTitle ) 
-            
-            
-        plt.show()    
-        
-        
+        plt.show()
+
 
 
 
@@ -908,16 +897,10 @@ def imagePlots(dobj, img, title):
     plt.tight_layout()
 
     
-    
-
-    
-        
-            
-  
 
 #
 # Plot <n> caps. Plot mean of ROI versus frame number
-#  data is 3 dimensions: data should be [nRuns, nFrames, nCaps]
+#
 def prettyPlot(data, title, options = None):
     nruns = len(data)
     ncaps = len(data[0,0] )
@@ -939,11 +922,8 @@ def prettyPlot(data, title, options = None):
             elif c%5 == 4:
                 clr = (0,0,x)
 
-            if n == 0:
-                lbl = f"Cap:{c+1}"    
-
             ax.plot( range(nframes), data[n,:,c], 
-                color=clr, label = lbl )
+                color=clr )
 
 
     plt.legend()
@@ -1257,6 +1237,7 @@ def calcMeanVersusTime(dobj, data=None, runnum=0):
 
 
 def calcLinearity(dobj, data=None, runnum = 0):
+
     """
     data is [#run, #frame, #cap]
     runnum increments from 0 to #run-1
@@ -1286,19 +1267,7 @@ def calcLinearity(dobj, data=None, runnum = 0):
         cnum = fIdex % 8
         dobj.foreStack[frameNum,cnum,:,:] = dataArray
 
-
-    # optionaly  compute the average of just the first run, and use that as the background
-    # for all subsequent runs
-    if hasattr(dobj, "computeBackgroundFromFirstRun") and runnum == 0:
-        ave = np.zeros((8,512,512),dtype=np.double)
-        for fIdex in range( fore.numImages):
-            frameNum = fIdex // ncaps
-            c = fIdex % ncaps
-            ave[c, :, :] += dobj.foreStack[frameNum,c,:,:]
-
-        ave = ave /  (fore.numImages / ncaps)   
-        dobj.backFromFirstRunAve = ave 
-    #  [ Frame, Cap, Y , X ] 
+    #  [ Frame, Cap, Y , X ] # TODO: check Y,X is correct
     
 
     if hasattr(dobj, "backFromFirstRunAve"):
@@ -1352,7 +1321,7 @@ def calcEachCapLineout(dobj,  data=None, runnum = 0):
         dataArray = np.resize(dataF,[512,512])
         dobj.foreStack[frameNum,cnum,:,:] = dataArray
 
-    #  [ Frame, Cap, Y , X ] 
+    #  [ Frame, Cap, Y , X ] # TODO: check Y,X is correct
     
     # rio is [X,Y,W,H]
     startPixY = roi[1]
@@ -1395,8 +1364,7 @@ def defineListOfTests():
     lot.append( ("Cornell_Noise", "Take 100 images x 8CAPS. Compute RMS from ave.") )
     lot.append( ("Cornell_Stability", "Take 1000 images x 8CAPS. Compute Mean over time. "
                   "Set self.delayBetweenRuns in units of seconds.") )
-    
-    
+   
     return lot
 
 
