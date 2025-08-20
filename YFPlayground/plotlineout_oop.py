@@ -75,7 +75,7 @@ import time
 #from ipywidgets import *
 #from IPython.display import display
 import UI_utils
-
+import configparser
 
 #
 # Define some globals
@@ -97,6 +97,8 @@ class dataObject:
         self.strDescriptor = strDescriptor
         self.dg = None  # Optional Delay Generator
         self.TakeBG = False
+        # Set usePreviousBackground = True to use a background previously taken
+        self.usePreviousBackground = False
         self.MessageBeforeBackground = None
         self.MessageAfterBackground = None
         self.fcnPlotOptions = None
@@ -310,13 +312,15 @@ class dataObject:
 
         # ****************************************************
         elif self.strDescriptor == "Move_IR_Along_Caps":
+            # BOOKMARK1
             # Setup is using 1 VCSEL  - direct imaged. NO integrating sphere. With 
             # + Filter wheel to set intensity
             # Width Switch; 
             # 1 1 1 1 1 1 1 1, 
             # SRS Burst Mode: Off. B=A+1us.   Vary A to move pulse into each CAP exposure 
             # Set HW parameters
-            self.TakeBG = True
+            #self.TakeBG = True
+            
             self.MessageBeforeBackground = "Disconnect the IR strobe trigger now"
             self.MessageAfterBackground = "Plug the IR strobe trigger now"
             #self.setname = 'xpad-test-1pulse-per-cap'
@@ -324,36 +328,62 @@ class dataObject:
             # SRS is setup as single pulse. 
             #self.integrationTime = 100000 # 100 us
             #self.interframeTime = 500 
-            self.setname = 'xpad-test-1pulse-walkthrough_500-300_20nsStep_ISS-BUFsweep2'
-            self.nFrames = 100  # frames Per Run . Step 100ns steps from 700ns * 8 = 5800ns is 58 steps!
-            self.integrationTime = 500 # 500ns
-            self.interframeTime = 300 
+            #self.setname = 'xpad-test-1pulse-walkthrough_500-300_20nsStep_ISS-BUFsweep2'
+            # Switch annotation is 0 is UP 1 is DOWN. Starting with Left ... to Right
+            #self.setname = 'xpad020-1pulse-walkthrough_300-200_20nsStep' #Switch 0 0 0 0 0 1 1 1
+            self.setname = 'xpad020-1pulse-walkthrough_500-200_100nsStepB' #Switch 0 0 0 0 0 0 1 1
+            self.setname = 'xpad020-1pulse-walkthrough_500-200_100nsStepC' #Switch 0 0 0 0 1 1 1 1
+            # ^ which should be 30ns puselwidth
+            # D block most of the sensor.
+            # E partly  blocked RLO
+            # F unblocked Room Lights On
+            # G same as F - RL Off
+            # H is 1 ms read delay
+
+            self.setname = 'xpad020-1pulse-walkthrough_500-200_100nsStepD' #Switch 0 0 0 0 1 1 1 1
+            self.setname = 'xpad020-1pulse-walkthrough_500-200_100nsStepE' #Switch 0 0 0 0 1 1 1 1
+            self.setname = 'xpad020-1pulse-walkthrough_500-200_100nsStepF' #Switch 0 0 0 0 1 1 1 1
+            self.setname = 'xpad020-1pulse-walkthrough_500-200_100nsStepG' #Switch 0 0 0 0 1 1 1 1
+            self.setname = 'xpad020-1pulse-walkthrough_500-200_100nsStepH' #Switch 0 0 0 0 1 1 1 1
+            self.setname = 'xpad020-1pulse-walkthrough_500-200_100nsStepI' #Switch 0 0 0 0 1 1 1 1
+            # hack to save retaking backround
+            self.usePreviousBackground = True
+            self.overrideBackgroundSetName = 'xpad020-1pulse-walkthrough_500-200_100nsStepC'
+            #
+            
+            #self.nFrames = 50  # frames Per Run . Step 100ns steps from 700ns * 8 = 5800ns is 58 steps!
+            self.nFrames = 60  # frames Per Run . Step 100ns steps from 700ns * 8 = 5800ns is 58 steps!
+            self.integrationTime = 1000 # 300ns
+            self.interframeTime = 200 
             
             
 
             # create a list of commands to send to hardware via mmcmd 
             unique_commands = [ 
-                "Cap_Select 0x0F"       
+                "Cap_Select 0x01FF"       
             ]
 
             #self.runVaryCommand="Readout_Delay"  # dummy not really scanning anything
             #self.varList = [50]
             self.runVaryCommand="DFPGA_DAC_OUT_V_ISS_BUF"  # dummy not really scanning anything
-            self.varList = [1297, 800, 500]
+            self.varList = [1297]
             self.runFrameCommand = self.usrFunction_DGCmd
             # step through 500ns offset, increment A by 100.005us steps. 
             #self.innerVarList = ["{:12.6e}".format(500e-9 + i*(100e-6 + 500e-9)) for i in range(0,self.nFrames)] 
-            self.innerVarList = ["{:12.6e}".format( i*(20e-9)) for i in range(0,self.nFrames)] 
+            # the delay is set in the number below.
+            self.innerVarList = ["{:12.6e}".format( i*(100e-9)) for i in range(0,self.nFrames)] 
             self.innerVarCommand ="DLAY 2,0,"  # Set channel A to T0 + (parameter)
  
 
             # ANALYZE PROPERTIES
-            self.roi = [30, 71, 16, 4]
+            self.roi = [140, 141, 100, 100]
+            #D:
+            #self.roi = [131, 309, 14,62]
             self.fcnToCall = calcLinearity
             self.roiSumNumDims = 4
 
             #self.roi = [4, 0*16, 128, 16]
-            self.NCAPS = 3 # can this be pulled from file?
+            self.NCAPS = 8 # can this be pulled from file?
             #self.fcnToCall = plotEachCapLineout
             #self.roiSumNumDims = 4
             #self.fcnPlot = #prettyAllCapsInALine 
@@ -684,8 +714,8 @@ class dataObject:
         """        
 
         # Using an SRS DG645 box:
-        #IP_ADDR = "192.168.11.225"     # for keck 002
-        IP_ADDR = "192.168.11.101"      # for keck002 (LLNL)
+        IP_ADDR = "192.168.11.225"     # for keck 002
+        #IP_ADDR = "192.168.11.101"      # for keck002 (LLNL)
         c = comObject( 1, IP_ADDR )
         r = c.tryConnect()
 
@@ -746,8 +776,14 @@ class dataObject:
                     foreFile = f'/mnt/raid/keckpad/set-{setname}/run-{runname}/frames/{runname}_00000001.raw'
                 
                 self.fore = BKL.KeckFrame( foreFile )
-                if self.TakeBG:
-                    backFile = f'/mnt/raid/keckpad/set-{setname}/run-back/frames/back_00000001.raw'
+                if self.TakeBG or self.usePreviousBackground:
+
+
+
+                    if hasattr(self, "overrideBackgroundSetName"):
+                        backFile = f'/mnt/raid/keckpad/set-{self.overrideBackgroundSetName}/run-back/frames/back_00000001.raw'    
+                    else:
+                        backFile = f'/mnt/raid/keckpad/set-{setname}/run-back/frames/back_00000001.raw'
                     self.back =  BKL.KeckFrame( backFile )
 
 
