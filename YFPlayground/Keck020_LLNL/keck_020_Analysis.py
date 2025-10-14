@@ -32,6 +32,9 @@
 #
 # INSTRUCTIONS
 #
+# Look for bSaveToDisk in the dataObject class.
+# Set accordingly.
+
 
 #
 # Issues with mmcmd - try this:
@@ -67,6 +70,7 @@ import time
 import UI_utils
 
 import configparser
+import pandas as pd
 
 
 #
@@ -76,7 +80,11 @@ VERBOSE = 1 # 0 = quiet, 1 = print some, 2 = print a lot
 #
 #
 # User edit settings
-RAIDPATH=r"\\SYDOR-NAS01\RawDataBackup\CHESS_Nov2024\sydor_keck_data"
+# Setting for 'Z drive'
+#RAIDPATH=r"\\SYDOR-NAS01\RawDataBackup\CHESS_Nov2024\sydor_keck_data"
+# Setting for local Mac
+RAIDPATH = '/Volumes/TOSHIBA EXT_Beige/CHESS_Nov2024/sydor_keck_data'
+
 #\set-CornellTests_24-11-06\run-FG_CeO2_111_200_0p1ms_200ns_4"
 print(RAIDPATH)
 exit
@@ -87,13 +95,13 @@ exit
 # OOP the heck out of this
 class dataObject:
     def __init__(self, strDescriptor, 
-                 bTakeData=False, bAnalyzeData = False):
+        bTakeData=False, bAnalyzeData = False):
         self.strDescriptor = strDescriptor
         self.dg = None  # Optional Delay Generator
         self.TakeBG = False
         self.MessageBeforeBackground = None
         self.MessageAfterBackground = None
-        self.fcnPlotOptions = None
+        self.fcnPlotOptions = {}
         self.runVaryCommand = None
         self.delayBetweenRuns = None
 
@@ -104,6 +112,16 @@ class dataObject:
         self.bTakeData = bTakeData
         self.bAnalyzeData = bAnalyzeData
         self.TEST_ON_MAC =  False
+
+        # You must set these manually . Set bSaveToDisk once to run the 
+        # long operation once, and save to PKL file.
+        # Then set it false, and set bLoadFromDisk to use the PKL file.    
+        self.bSaveToDisk = False
+        self.bLoadFromDisk =  not self.bSaveToDisk
+        #
+        #
+        #
+
         
 
         # Some routine use an SRS DG645 box:
@@ -172,31 +190,45 @@ class dataObject:
         # ****************************************************
         # ****************************************************
         if self.strDescriptor == "Analyze_CeO2":
+
+
             self.setname = 'CornellTests_24-11-06'
                               
             self.runnames = [f'FG_CeO2_111_200_0p{j+1}ms_200ns_{j+4}' for j in range(9)]
             self.runnames += [f'FG_CeO2_111_200_{j+1}ms_200ns_{j+13}' for j in range(5)]
 
-            self.nFrames = 17-3 # debug 17-4  # frames Per Run
+            self.nFrames = 9 + 5  # is the full data set. 
             #TODO - set ROI as needed            
-            self.roi = [90, 60, 10, 10]
+            
+            self.roi = [183,314,15,15]
             self.NCAPS = 8 # can this be pulled from file?
             self.fcnToCall = calcLinearity
-            self.roiSumNumDims = 3  # use fourth dim to hold integration times
-            self.fcnPlot = prettyPlot
+            self.roiSumNumDims = 3  #
+            ###self.roiSum_AttributeType = "ave,stdev" # make up a string that indicates the 
+            #  typeof data this arrauy will hold.
+            
+           
             self.varList = [i+4 for i in range(self.nFrames)]
             self.TakeBG = True   # Will load in a background
             self.back_runnames = [f'BG_CeO2_111_200_0p{j+1}ms_200ns' for j in range(9)]
             self.back_runnames += [f'BG_CeO2_111_200_{j+1}ms_200ns' for j in range(5)]
+    
             self.x_axis_values = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 2, 3, 4, 5]
             self.x_axis_values = self.x_axis_values[:self.nFrames] # clip if testing a subset 
             
-            self.fcnPlotOptions = self.x_axis_values # this work?
+            
+            self.fcnPlotOptions["x_axis_values"] = self.x_axis_values
+            self.fcnPlotOptions["x_axis_label"] = "Integration Time (ms)"
+            self.fcnPlotOptions["title"] = "Counts vary linearly with integration time"
+            
 
 
+             # Pass in the x axis values to plot.
+            self.fcnPlot = prettyPlot
+           
 
-  
-        
+
+       
             
         else:
              raise Exception(" !Unknown string! ") 
@@ -368,6 +400,8 @@ class dataObject:
         Load up the runs, and analyze
         """
 
+       
+
         setname = self.setname
         
         NRUNS = len(self.varList) 
@@ -383,61 +417,77 @@ class dataObject:
             runBase = 1
             backFile = None
             
+            if self.bSaveToDisk:
 
-            for runnum in range(NRUNS):
-                runname = self.runnames[runnum]
-                
-                if self.TEST_ON_MAC: # Local Mac testing!
-                    foreFile = f'/Users/yoram/Sydor/keckpad/30KV_1.5mA_40ms_f_00015001.raw' # check not sure...
+                for runnum in range(NRUNS):
+                    runname = self.runnames[runnum]
                     
-                else:
-                    foreFile = f'{RAIDPATH}/set-{setname}/run-{runname}/frames/{runname}_{runBase:08d}.raw'
-                    
-                
-                self.fore = BKL.KeckFrame( foreFile )
-                if self.TakeBG and self.back_runnames:
-                    back_runname = self.back_runnames[runnum]
-                    backFile = f'{RAIDPATH}/set-{setname}/run-{back_runname}/frames/{back_runname}_{runBase:08d}.raw'
-                    self.back =  BKL.KeckFrame( backFile )
-
-                if VERBOSE:
-                    print(f"Loaded up file: {foreFile}")
-
-                numImagesF = self.fore.numImages 
-
-                if self.nFrames  * self.NCAPS > 1000:
-                    # we need to read mutiple raw files - only 1000 per file.
-                    self.readAdditionalFiles = {
-                        "baseFilenameF" : foreFile[:-12], "nJumpBy":1000,
-                        "baseFilenameB" : backFile[:-12] if backFile else None
-                    }
-                    numImagesF = self.nFrames  * self.NCAPS
-
-
-                
-                if roiSum is None:
-                    if self.roiSumNumDims == 3:
-                        roiSum = np.zeros((NRUNS,numImagesF // NCAPS, NCAPS),dtype=np.double)
-                    elif self.roiSumNumDims == 4:
-                        roiSum = np.zeros((NRUNS,numImagesF // NCAPS, NCAPS, self.roi[2]),dtype=np.double)
-
-
-                            
+                    if self.TEST_ON_MAC: # Local Mac testing!
+                        foreFile = f'/Users/yoram/Sydor/keckpad/30KV_1.5mA_40ms_f_00015001.raw' # check not sure...
                         
+                    else:
+                        foreFile = f'{RAIDPATH}/set-{setname}/run-{runname}/frames/{runname}_{runBase:08d}.raw'
+                        
+                    
+                    self.fore = BKL.KeckFrame( foreFile )
+                    if self.TakeBG and self.back_runnames:
+                        back_runname = self.back_runnames[runnum]
+                        backFile = f'{RAIDPATH}/set-{setname}/run-{back_runname}/frames/{back_runname}_{runBase:08d}.raw'
+                        self.back =  BKL.KeckFrame( backFile )
 
-                # create global big arrays to hold images
-                self.foreStack = np.zeros((numImagesF // NCAPS, NCAPS,512,512),dtype=np.double)
+                    if VERBOSE:
+                        print(f"Loaded up file: {foreFile}")
+
+                    numImagesF = self.fore.numImages 
+
+                    if self.nFrames  * self.NCAPS > 1000:
+                        # we need to read mutiple raw files - only 1000 per file.
+                        self.readAdditionalFiles = {
+                            "baseFilenameF" : foreFile[:-12], "nJumpBy":1000,
+                            "baseFilenameB" : backFile[:-12] if backFile else None
+                        }
+                        numImagesF = self.nFrames  * self.NCAPS
 
 
-                # Each time called, builds up data in data var/ roiSum.
-            
-                roiSum = self.fcnToCall( self, data = roiSum, runnum = runnum)
+                    
+                    if roiSum is None:
+                        if self.roiSumNumDims == 3:
+                            roiSum = np.zeros((NRUNS,numImagesF // NCAPS, NCAPS),dtype=np.double)
+                        elif self.roiSumNumDims == 4:
+                            roiSum = np.zeros((NRUNS,numImagesF // NCAPS, NCAPS, self.roi[2]),dtype=np.double)
 
-                if self.runVaryCommand:
-                    title = f"{self.runVaryCommand} {self.varList}"
+                        # if self.roiSum_AttributeType == "ave,stdev"  :
+                        #     # Allocate 0 index for AVE and 1 index for STDEV
+                        #     roiSum = np.zeros((NRUNS,numImagesF // NCAPS, NCAPS, 2),dtype=np.double)  
+                        # else:
+                        #     raise Exception("Unknown roiSum_AttributeType")
+                            
 
-            
-            #ENDFOR
+                    # create global big arrays to hold images
+                    self.foreStack = np.zeros((numImagesF // NCAPS, NCAPS,512,512),dtype=np.double)
+
+
+                    # Each time called, builds up data in data var/ roiSum.
+                
+                    roiSum = self.fcnToCall( self, data = roiSum, runnum = runnum)
+
+                    if self.runVaryCommand:
+                        title = f"{self.runVaryCommand} {self.varList}"
+
+                
+                #ENDFOR
+
+                saveData(roiSum, title, options = None)
+                exit(0)
+
+
+
+            elif self.bLoadFromDisk:
+                # Load from Picke file
+                roiSum = loadData()
+                title = "TODO: Loaded from Pickle file"    
+
+
             if hasattr(self, "newTitle"):
                 title = self.newTitle + ":" + title
 
@@ -569,53 +619,159 @@ def imagePlots(dobj, img, title):
     plt.tight_layout()
 
     
-    
+def loadData():
+    """ 
+    Load data from a pickle file
+    """
+    filename = "DUMP.pkl"
+    with open(filename, 'rb') as f:
+        data = pickle.load(f)
+    print(f"Loaded data from {filename}")
+    return data     
+
+
 
     
-        
+def saveData(data, title, options = None):
+    """ 
+    Save data to a pickle file
+    """
+    filename = "DUMP.pkl"
+    with open(filename, 'wb') as f:
+        pickle.dump(data, f)
+    print(f"Saved data to {filename}")
+
+
             
   
 
 #
 # Plot <n> caps. Plot mean of ROI versus frame number
-#  data is 3 dimensions: data should be [nRuns, nFrames, nCaps]
-# options can be self.x_axis_values[]
+#  data is 4 dimensions: data should be [nRuns, nFrames, nCaps, 2] 
+# options is a dictionary. Currently recognixes:
+#    {"x_axis_values" : [array of value]
+#    {"x_axis_label" : <string> }
+#    {"title" : <string> }
 def prettyPlot(data, title, options = None):
     nruns = len(data)
     ncaps = len(data[0,0] )
     fig, ax = plt.subplots()
     #plt.figure(1)
     averageOverFrames = np.zeros(nruns,dtype=np.double)
+    stdev = np.zeros(nruns,dtype=np.double)
+    bestfit = np.zeros( (ncaps,2),dtype=np.double)
+
+
     
     colors = ['r', 'orange','y', 'g', 'b', 'violet', 'indigo', 'black'] 
     nframes = len(data [0])
-    
+
+    norm_diode = readCSV()  # read in the diode values for normalization
+    #
+    assert len(norm_diode) == nruns, "Diode values do not match number of runs"
+    #
+
     xrange = range(nruns)
-    if options is not None:
-        arr = np.array(options)
-        if arr.ndim == 1 and np.issubdtype(arr.dtype, np.floating):
-            xrange = options
-            # options is a 1D array of floats
-            pass
+    if options and "x_axis_values" in options:
+        xrange = options["x_axis_values"]  # HERE x values can get passed in here
+        # options is a 1D array of floats
+        pass
     for c in range(ncaps):
         for n in range(nruns):
             
             # average the mean over all n frames
-            averageOverFrames[n] = np.average(data[n, :, c])
+            # Divide data by the normalized diode value for that run
+            averageOverFrames[n] = np.average(data[n, :, c]) / norm_diode[n]
+            stdev[n] = np.std(data[n, :, c]/ norm_diode[n] )
+            #DEBUG  
+            #print("DEBUG:")
+            #print(    f"{data[n, :, c]}")     
+            #print(f"AVE: {averageOverFrames[n]} , STDEV: {stdev[n]}")
 
         lbl = f"Cap:{c+1}"   
-        ax.plot( xrange,  averageOverFrames[:], 
-                color=colors[c], label = lbl )
+        
 
+
+        # Create a line plot with error bars
+        ax.errorbar(
+            xrange,
+            averageOverFrames,
+            yerr=stdev,
+            color=colors[c],
+            label=lbl,
+            capsize=3,     # adds little caps on error bars
+            linewidth=1.5, # optional styling
+        )
+
+        # fit data to a line
+        # store result for later
+        bestfit[c] = np.polyfit(xrange, averageOverFrames, 1)
+        ##p = np.poly1d(z)
+        ##print(f"Fit to line: {p}")
+        ##ax.plot(xrange, p(xrange), "k--", label="Fit to line")
 
     plt.legend()
-    plt.xlabel('N')
+    plt.xlabel( options["x_axis_label"] if options and "x_axis_label" in options else 'N' )
+
     plt.ylabel('mean (ADU)')
-    plt.title( title )
+    plt.title( options["title"] if options and "title" in options else title)
     ax.yaxis.set_minor_locator( MultipleLocator(1000))
 
     
-    #plt.show(block= True) 
+    print (bestfit) # should be 8 x [slope,offset]
+
+    # create a residuals plot
+    fig2, ax2 = plt.subplots()
+    for c in range(ncaps):
+        residuals = np.zeros(nruns,dtype=np.double)
+        for n in range(nruns):
+            residuals[n] = averageOverFrames[n] - (bestfit[c,0]*xrange[n] + bestfit[c,1])
+        lbl = f"Cap:{c+1}"   
+        ax2.plot( xrange,  residuals[:], 
+                color=colors[c], label = lbl )  
+        
+    # 
+    ax2.set_xlabel(options["x_axis_label"] if options and "x_axis_label" in options else "X")
+    ax2.set_ylabel("Residual (ADU)")
+    ax2.set_title("Residuals (Data - line fit)  per Cap")
+
+    plt.show(block= True) 
+
+
+#Wrap this code into it own function
+#  # Read CSV file
+#  #  # https://pandas.pydata.org/docs/reference/api/pandas.read_csv.html
+def readCSV():
+    import pandas as pd
+
+    # Path to your CSV file
+    # This file uses the average of all the diode readings for ic0. Each Spec run starts
+    # at the beginning of a run, so it roughtly matches in time
+    filename = "YFPlayground/Keck020_LLNL/Energy_Correction.csv"
+    # ^ Path might break if not running From the PAD_Analysis folder
+
+
+    # Read the CSV into a DataFrame
+    df = pd.read_csv(filename)
+
+    # Display the contents
+    print(df) # DEBUG
+
+    # Access columns as Series
+    int_time = df["IntTime"]
+    spec_num = df["SPEC#"]
+    avg_diode = df["Average Diode Reading"]
+
+    print("\nIntTime values:", int_time.to_list())
+    print("Average Diode Readings:", avg_diode.to_list())
+
+    first = avg_diode[0]
+    normed_diode = [x / first for x in avg_diode]
+    print("Normalized Diode Readings:", normed_diode)
+    return normed_diode
+
+    
+    
 
 
 
@@ -916,11 +1072,12 @@ def calcMeanVersusTime(dobj, data=None, runnum=0):
 
     return data
 
-
-
+#
+#
+#
 def calcLinearity(dobj, data=None, runnum = 0):
     """
-    data is [#run, #frame, #cap]
+    data is [#run, #frame, #cap]   
     runnum increments from 0 to #run-1
     NOTE - Data is stored in array data.
     stores the average value over the ROI.
@@ -949,7 +1106,7 @@ def calcLinearity(dobj, data=None, runnum = 0):
         dobj.foreStack[frameNum,cnum,:,:] = dataArray
 
 
-    # optionaly  compute the average of just the first run, and use that as the background
+    # optionally  compute the average of just the first run, and use that as the background
     # for all subsequent runs
     if hasattr(dobj, "computeBackgroundFromFirstRun") and runnum == 0:
         ave = np.zeros((8,512,512),dtype=np.double)
@@ -976,10 +1133,17 @@ def calcLinearity(dobj, data=None, runnum = 0):
     endPixX = startPixX + roi[2]
     nImages =  fore.numImages // ncaps  # not a typo "//" is integer division 
     
-
+    ### 14OCT25 - Add std deviation to data array
     for fn in range( nImages ): 
         for cn in range (ncaps):
-            data[runnum, fn,cn] = np.average( dobj.foreStack[fn, cn, startPixY:endPixY, startPixX:endPixX] )
+            ave = np.average( dobj.foreStack[fn, cn, startPixY:endPixY, startPixX:endPixX] )
+            ##stdev = np.std( dobj.foreStack[fn, cn, startPixY:endPixY, startPixX:endPixX] )
+          
+            # store ave 
+            data[runnum, fn, cn] = ave
+            
+            
+
             #print( fn, cn, roiSum)
 
     return data
@@ -1046,7 +1210,8 @@ def defineListOfTests():
     """
 
     lot = []
-    lot.append( ("Analyze_CeO2", "Linearity vs  integration time.") )
+    lot.append( ("Analyze_CeO2", "Linearity vs  integration time. Then save to PKL") )
+    
     
     
     return lot
