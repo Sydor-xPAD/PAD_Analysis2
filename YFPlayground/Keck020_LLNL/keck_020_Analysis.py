@@ -1,4 +1,4 @@
- #!/usr/bin/env python3
+#!/usr/bin/env python3
 # File: keck_020_Analysis.py
 # Description - Create a list of analysis routines
 #
@@ -92,7 +92,7 @@ RAIDPATH = '/Volumes/TOSHIBA EXT_Beige/CHESS_Nov2024/sydor_keck_data'
 # for ID 1 to 7
 #  Analyze RingWalk ID #
 #
-ARW_ID = 7 # 1  = Cornell_Tests_24-11-07_RW_FG_50ns_50ns
+ARW_ID = 6 # 1  = Cornell_Tests_24-11-07_RW_FG_50ns_50ns
 #          2  = Cornell_Tests_24-11-07_RW_FG_100ns_50ns
 #          3  = Cornell_Tests_24-11-07_RW_FG_100ns_100ns    
 #          4 = Cornell_Tests_24-11-07_RW_FG_100ns_200ns
@@ -100,7 +100,7 @@ ARW_ID = 7 # 1  = Cornell_Tests_24-11-07_RW_FG_50ns_50ns
 #          6 = Cornell_Tests_24-11-07_RW_FG_200ns_200ns        
 #          7= Cornell_Tests_24-11-07_RW_FG_300ns_200ns
 #
-#   Set below true to oad files (takes a long time) and save to Pickle file
+#   Set below true to load files (takes a long time) and save to Pickle file
 #   Then re run with it set to False to load from Pickle file (fast)
 SAVE_TO_DISK = False    
 
@@ -163,40 +163,6 @@ class dataObject:
 
             
         
-
-        
-        
-
-
-
-    #
-    # userFunction is called for each frame of a run ( assumes an external trigger )
-    #
-    def usrFunction_DGCmd( self,nLoop ):
-        """ nLoop is the frame number. 
-        Send a command to DG SRS at each frame - assumes Ext trigger.
-        """
-        
-        print(f"Called userFunction n={nLoop}")
-        self.dg.counter  = nLoop + 1
-        c  = f"{self.innerVarCommand} {self.innerVarList[nLoop]}"  
-        
-        #s = f"BURC {self.dg.counter}" # Set the burst Count
-        self.dg.send(c);
-        self.dg.doTrigger()
-        
-    #
-    # userFunction is called for each frame of a run ( assumes an external trigger )
-    #
-    def userFunctionB( self, nLoop ):
-        """ nLoop is the frame number. 
-        Send a command to xPAD at each frame.
-        """ 
-        print(f"Called userFunctionB n={nLoop}")
-        c  = f"{self.innerVarCommand} {self.innerVarList[nLoop]}"  
-        
-        res = xd.run_cmd(c)
-        self.dg.doTrigger()
 
 
     def createObject(self):
@@ -273,6 +239,8 @@ class dataObject:
             self.inter = 0
 
             self.TakeBG = True   # Will load in a background
+
+            self.debounce = True   # new code to debounce
 
             if ARW_ID == 1:
                 self.roi = [279,188,2,2]  # Verify the spot doesn't move from run to run (!)
@@ -361,7 +329,7 @@ class dataObject:
             self.fcnPlotOptions["integ"] = self.integ
             self.fcnPlotOptions["inter"] = self.inter
             self.fcnPlotOptions["title"] = f"RingWalk. Plot intensity "\
-                "versus delay.Integ = {self.integ} ns, Inter = {self.inter} ns"
+                f"versus delay.Integ = {self.integ} ns, Inter = {self.inter} ns"
 
 
            
@@ -466,8 +434,64 @@ class dataObject:
             self.fcnPlot = prettyPlot2
             self.pickleFilename = f"ruby_gain_scan"
 
-            
+        # ****************************************************
+        # ******************* 5555555 ************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************            
+        elif self.strDescriptor == "Atten_Lin":
+
+            #'/Volumes/TOSHIBA EXT_Beige/CHESS_Nov2024/sydor_keck_data/set-/'
+            self.setname = 'Cornell_Tests_24-11-08_ATT_LIN_G0p1_TD0p2'
+            gains = ["G1p0", "G0p429", "G0p250", "G0p153"]
+            times = ["10", "5", "2", "1", "0p5", "0p2", "0p1", "0p05"]
+            # run-FG_5us_100ns_att0-0
+            self.runnames = [f'FG_5us_100ns_att{x}' for x in ["0-0", "1-0", "5-0", \
+                "10-0", "13-0", "15-0", "17-0", "0-1", "0-4", "0-7", "0-10"]
                 
+                ]
+
+            self.nFrames = len(self.runnames)
+                  
+            
+            self.roi = [280,184,7,7]  
+            self.NCAPS = 8 # can this be pulled from file?
+            self.fcnToCall = calcLinearity
+            self.roiSumNumDims = 3  #
+
+
+            self.varList = [i for i in range(self.nFrames)]
+            self.TakeBG = True   # Will load in a background
+            # '/Volumes/TOSHIBA EXT_Beige/CHESS_Nov2024/sydor_keck_data/set-Cornell_Tests_24-11-08_ATT_LIN_G0p1_TD0p2/run-BG_5us_100ns/frames/BG_5us_100ns_00000001.raw'
+
+            self.backSetName = self.setname
+            self.backRunName ="BG_5us_100ns"
+
+            
+    
+            self.x_axis_values = [x for x in range( self.nFrames)]
+            self.x_axis_values = self.x_axis_values[:self.nFrames] # clip if testing a subset 
+            
+            
+            self.fcnPlotOptions["x_axis_values"] = self.x_axis_values
+            self.fcnPlotOptions["x_axis_label"] = "TODO"
+            self.fcnPlotOptions["title"] = "Counts vs External Attenuation"    
+            self.fcnPlotOptions["energy_correction_filename"]  = "YFPlayground/Keck020_LLNL/Atten_Lin.csv"
+                
+
+             # Pass in the x axis values to plot.
+            self.fcnPlot = prettyPlot3
+            self.pickleFilename = f"ruby_atten_lin"
+            self.rejectInvalidPixels = True
+
+
+           
+            #        
         else:
              raise Exception(" !Unknown string! ") 
 
@@ -690,6 +714,8 @@ class dataObject:
 
                     if VERBOSE:
                         print(f"Loaded up file: {foreFile}")
+                        if (self.back):
+                            print(f"Loaded up background file: {backFile}")
 
 
                     numImagesF = self.fore.numImages 
@@ -909,6 +935,8 @@ def ringWalkPlot(data, title, options:dict):
     dT = 10 # time between runs in ns
 
     phase = 0
+    SHOW_EVERY_TRACE = 0
+
     # Require  dict with these defined
     integTime = options["integ"]     
     interTime = options["inter"]     
@@ -918,15 +946,22 @@ def ringWalkPlot(data, title, options:dict):
     for c in range(ncaps):
         phase = 0
         xvalue = np.zeros(nruns)
-        yvalue = np.zeros( (nruns,nframes) ) 
+        if SHOW_EVERY_TRACE:
+            yvalue = np.zeros( (nruns,nframes) ) 
+        else:    
+            yvalue = np.zeros( (nruns,2) ) 
+        
         for n in range(nruns):
             phase +=   dT # in ns              
        
             cphase = phase + (integTime + interTime)* c # assumes integ and inter are constant
             xvalue[n] = cphase
-            ##stddev = np.std(data[n, :, c])
-            #yvalue[n] = [np.mean(data[n, :, c])+stddev, np.mean(data[n, :, c])- stddev]
-            yvalue[n] = data[n, :, c]
+            
+            if SHOW_EVERY_TRACE:
+                yvalue[n] = data[n, :, c]
+            else:
+                stddev = np.std(data[n, :, c])
+                yvalue[n] = [np.mean(data[n, :, c])+stddev, np.mean(data[n, :, c])- stddev]
                 
         #plt.plot( xvalue, yvalue,  
         #         color = colors[c], label = f"Cap {c+1}" )
@@ -950,7 +985,99 @@ def ringWalkPlot(data, title, options:dict):
     plt.grid()
     plt.show(block = False)    
                    
+
+
+
+#
+#  This version used to plot Atten_Lin data
+#
+def prettyPlot3(data, title, options:dict):
+    nruns =  len(data)
+    ncaps = len(data[0,0] )
+    fig, ax = plt.subplots()
+    #plt.figure(1)
+    
+    stdev = np.zeros(nruns,dtype=np.double)
+    bestfit = np.zeros( (ncaps,2),dtype=np.double)
+
+    
+    colors = ['r', 'orange','y', 'g', 'b', 'violet', 'indigo', 'black'] 
+    nframes = len(data [0])
+    values = np.zeros(nframes,dtype=np.double)
+
+    norm_diode = readCSV(options["energy_correction_filename"] )  # read in the diode values for normalization
+
+      
+    #
+    assert len(norm_diode) == nruns, "Diode values do not match number of runs"
+    #
+
+    xrange = [i for i in range(11)]
+    # 5 categories
+    categories = ["att0-0", "att1-0", "att5-0", "att10-0", "att13-0", "att15-0", "att17-0",\
+         "att0-1", "att0-4", "att0-7", "att0-10"]
+    n_per_category = nframes
+
+    gain_factor = [1.00, 8.22E-01, 5.73E-01, 3.19E-01, 1.74E-01, 9.21E-02, \
+        2.43E-02, 9.11E-03, 8.08E-04, 9.94E-05, 1.03E-05]
+    # Gain factors from LLNL calibration file
+
+
+
+    normalizeValue = np.average(data[0, :, 0]) / norm_diode[0]
+    for c in range(ncaps):
+        for j in range(nruns):  
+            n = j +  0
+           
+            # Divide data by the normalized diode value for that run
+            values = (data[n, :, c]) / norm_diode[n] / normalizeValue  / gain_factor[j]
+            x_positions = [j*1 + (i/nframes)*0.9 for i in range(nframes)]
+            
+            
+            # label only once per capacitor (for legend)
+            if n == 0:
+                plt.scatter(x_positions, values, color=colors[c], label=f"Cap:{c+1}", s=15)
+            else:
+                plt.scatter(x_positions, values, color=colors[c], s=15)
+        
+       
+        # Make category ticks and labels
+        plt.xticks(range(len(categories)), categories)
+
+        plt.xlabel("Attenuation Category")
+        plt.ylabel("Normalized Value to Att0-0, Cap1")
+        plt.title("Values by Gain Category")
+
+        plt.ylim(0, 2)   # set y-axis limits
+
+        
+        # # X range for the overlay lines
+        # x = [1-.1, 2+.1]
+
+        # # Y positions for the horizontal lines
+        # y_values = [0.429, 0.250, .153]
+        # # Gain is "1.0", "0.429", ".250", ".153"
+
+        # # Plot each overlay line
+        # for i,y in enumerate(y_values):
+        #     plt.plot(x, [y, y], linestyle='--', color='red', alpha=0.7)
+        #     x = [val + 1 for val in x]
                 
+        plt.legend()
+            
+    # plt.xlabel( options["x_axis_label"] if options and "x_axis_label" in options else 'N' )
+
+    # plt.ylabel('mean (ADU)')
+    # plt.title( options["title"] if options and "title" in options else title)
+    # ax.yaxis.set_minor_locator( MultipleLocator(1000))
+
+     
+
+    plt.show(block= True) 
+
+
+
+
 
 #
 #  This version used to plot cap gain
@@ -981,14 +1108,15 @@ def prettyPlot2(data, title, options:dict):
     categories = ["gain1", "gain2", "gain3", "gain4"]
     n_per_category = nframes
 
-    normalizeValue = np.average(data[0, :, 0]) / norm_diode[0]
+    ExposureRunIndex = 8 #  0 = 10us, 4 = 5us, 8=2us, 12=1us
+    normalizeValue = np.average(data[ExposureRunIndex, :, 0]) / norm_diode[ExposureRunIndex]
     for c in range(ncaps):
-        for n in range(nruns):  # only first 4 runs
-            
+        for j in range(nruns):  # only first 4 runs
+            n = j +  ExposureRunIndex
             # average the mean over all n frames
             # Divide data by the normalized diode value for that run
             values = (data[n, :, c]) / norm_diode[n] / normalizeValue
-            x_positions = [n*10 + (i/nframes)*9 for i in range(nframes)]
+            x_positions = [j*1 + (i/nframes)*0.9 for i in range(nframes)]
             #stdev[n] = np.std(data[n, :, c]/ norm_diode[n] )
             #DEBUG  
             #print("DEBUG:")
@@ -1003,33 +1131,29 @@ def prettyPlot2(data, title, options:dict):
             else:
                 plt.scatter(x_positions, values, color=colors[c], s=15)
         
-
-        # # Create a line plot with error bars
-        # ax.errorbar(
-        #     xrange,
-        #     averageOverFrames,
-        #     yerr=stdev,
-        #     color=colors[c],
-        #     label=lbl,
-        #     capsize=3,     # adds little caps on error bars
-        #     linewidth=1.5, # optional styling
-        # )
-
-        # fit data to a line
-        # store result for later
-        #bestfit[c] = np.polyfit(xrange, averageOverFrames, 1)
-        ##p = np.poly1d(z)
-        ##print(f"Fit to line: {p}")
-        ##ax.plot(xrange, p(xrange), "k--", label="Fit to line")
-
+       
         # Make category ticks and labels
         plt.xticks(range(len(categories)), categories)
 
         plt.xlabel("Gain Category")
         plt.ylabel("Normalized Value to Gain 1.0, Cap1")
         plt.title("Values by Gain Category")
+
+        
+        # X range for the overlay lines
+        x = [1-.1, 2+.1]
+
+        # Y positions for the horizontal lines
+        y_values = [0.429, 0.250, .153]
+        # Gain is "1.0", "0.429", ".250", ".153"
+
+        # Plot each overlay line
+        for i,y in enumerate(y_values):
+            plt.plot(x, [y, y], linestyle='--', color='red', alpha=0.7)
+            x = [val + 1 for val in x]
+                
         plt.legend()
-    
+            
     # plt.xlabel( options["x_axis_label"] if options and "x_axis_label" in options else 'N' )
 
     # plt.ylabel('mean (ADU)')
@@ -1245,19 +1369,69 @@ def calcLinearity(dobj, data=None, runnum = 0):
         plt.show(block = True)
                  
 
-        
-    
-    
-    for fn in range( nImages ): 
-        for cn in range (ncaps):
-            ave = np.average( dobj.foreStack[fn, cn, startPixY:endPixY, startPixX:endPixX] )
-          
-            # store ave 
-            data[runnum, fn, cn] = ave
-            
-            
+    if hasattr(dobj,"rejectInvalidPixels"):
+        I_min = -50     # lower threshold (noise floor)
+        I_max = 20000    # upper threshold (saturation limit)
 
-            #print( fn, cn, roiSum)
+
+        # Compute valid mask once across all frames and caps
+        valid_mask = np.ones((endPixY - startPixY, endPixX - startPixX), dtype=bool)
+
+        for fn in range(nImages):
+            for cn in range(ncaps):
+                area = dobj.foreStack[fn, cn, startPixY:endPixY, startPixX:endPixX]
+                valid_mask &= (area >= I_min) & (area <= I_max)
+
+        # Now compute mean per run using that same mask
+        for fn in range(nImages):
+            for cn in range(ncaps):
+                area = dobj.foreStack[fn, cn, startPixY:endPixY, startPixX:endPixX]
+
+                valid_pixels = area[valid_mask]
+                if valid_pixels.size > 0:
+                    ave = valid_pixels.mean()
+                else:
+                    ave = np.nan
+
+                data[runnum, fn, cn] = ave 
+        
+        
+
+    else:
+    
+        # New code -- optionally debounce the data using the mean of another ROI
+        if hasattr(dobj, "debounce") and dobj.debounce == True:
+            debounce = True
+            db_startPixY = 165
+            db_endPixY = db_startPixY + 50
+            db_startPixX = 300
+            db_endPixX= db_startPixX + 50
+
+        else:
+            debounce = False
+
+    
+        for fn in range( nImages ): 
+            for cn in range (ncaps):
+
+                ave = np.average( dobj.foreStack[fn, cn, startPixY:endPixY, startPixX:endPixX] )      
+                if debounce:
+                    
+                    bncVal = np.average( dobj.foreStack[fn, cn, \
+                        db_startPixY:db_endPixY, db_startPixX:db_endPixX] )  
+
+                    print (f"ave{ave}, dbn{bncVal}")
+
+                    ave -= bncVal  
+              
+
+                
+                # store ave 
+                data[runnum, fn, cn] = ave
+                
+                
+
+                #print( fn, cn, roiSum)
 
     return data
 
@@ -1279,6 +1453,9 @@ def defineListOfTests():
     lot.append( ("Analyze_RingWalk", "Ringwalk -  edit file to select run.") )
     lot.append( ("Ruby_integ_scan", "Linearity vs integration time w Ruby spot.") )
     lot.append( ("Ruby_gain-lin", "Linearity vs keck Gain.") )
+    lot.append( ("Atten_Lin", "Linearity vs Alum/Steel Attenuator.") )
+
+    
 
 
     

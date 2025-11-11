@@ -12,3 +12,4 @@ config.json
 bestK.pkl
 ana_dig.pkl
 !YFPlayground/Keck020_LLNL/*.csv
+/.venv
