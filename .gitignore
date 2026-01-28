@@ -11,3 +11,5 @@ config.json
 .DS_Store
 bestK.pkl
 ana_dig.pkl
+!YFPlayground/Keck020_LLNL/*.csv
+/.venv

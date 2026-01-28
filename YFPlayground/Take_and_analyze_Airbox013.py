@@ -19,6 +19,7 @@
 # v 0.8 9/21/23 Allow IP differences in SRS boxes in same source
 # v 0.9 12/23/23 Some fixes to SMK_021 Testing
 # V 1.0 1/24/24 - Code Analysis of Sweep_SRS_BurstCount
+# V 1.1 7/29/25 - Tweaks for MM-PAD013 (round #3)
 
 # ***** git instructions *****
 #  If weirdness you may need this - but probably not.
@@ -77,8 +78,8 @@ import time
 import UI_utils
 
 import configparser
-from MM_Analysis import calcLinearity_MM
-from MM_Analysis import plot_MM
+from MM_Analysis import calcLinearity_MM, calc1_MM
+from MM_Analysis import plot_MM, prettyPlot_MM
 
 #
 # Define some globals
@@ -113,7 +114,7 @@ class dataObject:
         self.bTakeData = bTakeData
         self.bAnalyzeData = bAnalyzeData
         self.TEST_ON_MAC = False ####  Debug!  False
-        self.TEST_ON_WINDOWS = True ### DEBUG! False
+        self.TEST_ON_WINDOWS = False ### DEBUG! False
         
 
         # Some routine use an SRS DG645 box:
@@ -186,16 +187,28 @@ class dataObject:
             #   looks like it gets to 15 digital counts
             # OOPS!  Dont use 65535 - use 65536 or just use 16384 that is OK too.
 
-            self.setname = 'mpad-linscan3'
-            self.nFrames = 1000  # frames Per Run
-            self.Correction_Value = 65535 # REQUIRED # oops# see note
+            # Airbox Repair Round 2 - 21APR2-25
+            # Check correction Values: 16483 check.
+            # mpad-linscan3 - 50ms. Not cooled, at 15C. 500 images -> 500 pulses.
+            # mpad-linscan4 - 50ms. cooled to 5c. 500 images -> 500 pulses.
+            # mpad-linscan5 -  cooled to 2c. tbd
+            # mpad-linscan6 -  cooled to 2c. With the final Correction Values
+
+            # mpad-linscan100 -  Airbox#3 repair. cooled to 2c. with default Corr Values
+            # mpad-linscan101 -  With final correc values
+            #self.setname = 'mpad-linscan100'
+            self.setname = 'mpad-linscan101'  
+
+            self.nFrames = 500  # frames Per Run
+            self.Correction_Value = 16384 # REQUIRED # oops# see note
+
+            
 
             # SRS is setup with PER of 100us, so 100 takes 10ms
             #   1000 takes 100ms
-            self.integrationTime = 100000 # 100.0 millseconds
+            self.integrationTime = 50000 # 50.0 millseconds
             self.interframeTime = 100 # 100 usec
             
-
             # MMPAD has no Cap_Select
             # # create a list of commands to send to hardware via mmcmd 
             unique_commands = [  ]
@@ -213,70 +226,43 @@ class dataObject:
             self.fcnToCall = calcLinearity_MM  # in file MM_Analysis.py 
             self.roiSumNumDims = 3
             self.fcnPlot = plot_MM
+
   
-        # ****************************************************
-        elif self.strDescriptor == "Sweep_Interframe1":
-            # Setup is using 1 VCSEL inside the integrating sphere. With 
-            # Width Switch; the three rightmost switches (towards power connector) are down:
-            # 1 1 1 1 1 0 0 0,  and there is one piece of silver mylar IFO the VCSEL 
-            # Set HW parameters
-            self.setname = 'xpad-linscan_B100_IF1'
+        elif self.strDescriptor == "Test_Positions":
+            #
+            #   Used to quickly verify each submodule position and its 
+            #  corresponding Correction_Value[] index.
+            #
+            #mpad-tp1 - geo target all covered except ASIC 0 
+            self.setname = 'mpad-tp2'
             self.nFrames = 20  # frames Per Run
-            # SRS is setup with PER of 100us, so 20 takes 2ms
-            self.integrationTime = 3000000 # 3.0 millseconds
-            self.interframeTime = 100 # 100 nSec # gets swept #
+            self.Correction_Value = 16384 # REQUIRED # oops# see note
+            # SRS is setup with PER of 100us, so 100 takes 10ms
+            #   1000 takes 100ms
+            self.integrationTime = 50000 # 50.0 millseconds
+            self.interframeTime = 100 # 100 usec
+            
+            self.MessageBeforeBackground = "Disconnect the IR strobe trigger now"
+            self.MessageAfterBackground = "Plug the IR strobe trigger now"
 
-            # create a list of commands to send to hardware via mmcmd 
-            unique_commands = [ 
-                "Cap_Select 0xF"       
-            ]
+            # MMPAD has no Cap_Select
+            # # create a list of commands to send to hardware via mmcmd 
+            unique_commands = [  ]
 
             
-            self.runVaryCommand="InterFrame_NSec" 
-            self.varList = [200, 500, 1000, 2000, 5000, 10000] 
+            self.runVaryCommand=""
+            self.varList = [1] 
             self.runFrameCommand = self.usrFunction_DGCmd 
-
+            
             self.innerVarCommand ="BURC" 
-            self.innerVarList = [i for i in range(1, self.nFrames)]
-
-            self.roi = [46, 92, 32, 20]
-            self.NCAPS = 3 # can this be pulled from file?
-            self.fcnToCall = calcLinearity
+            self.innerVarList = [i*25 for i in range(1, self.nFrames+1)]
+            
+            self.roi = [90, 60, 10, 10]
+            self.NCAPS = 1
+            self.fcnToCall = calcLinearity_MM  # in file MM_Analysis.py 
             self.roiSumNumDims = 3
-            self.fcnPlot = prettyPlot
+            self.fcnPlot = plot_MM
 
-        # ****************************************************
-        elif self.strDescriptor == "Sweep_Inter1":               
-            # How does the slope of dark frames change as we change the interframe1 time? 
-            # Set HW parameters
-            #self.setname = 'xpad-scan_inter1_B27_swapBP_OR_100_100s'
-            self.setname = 'xpad-scan_inter1_B27_oldRTL'
-            self.nFrames = 10  # frames Per Run  
-          
-            # We ARE 'allowed' to change delay param in a run (!)
-            
-            #self.integrationTime = 50 # 100ns
-            self.integrationTime = 100 # 100ns
-            self.interframeTime = 100  # 100 ns - initial same on all.
-            
-            # create a list of commands to send to hardware via mmcmd 
-            unique_commands = [ 
-                "Cap_Select 0x1FF",
-            ]
-           
-            self.runVaryCommand="Readout_Delay" 
-            #self.varList = [0,50,100,150]
-            self.varList = [50]
-            self.runFrameCommand = self.userFunctionB
-            self.innerVarList = [100,150,200,250,300, 350, 400, 450, 500, 550]
-            #self.innerVarCommand ="Interframe_nsec[1]" # [0] does not work correctly BUG!
-            self.innerVarCommand ="Interframe_nsec" 
-
-            self.roi = [0, 7*16, 128, 16]
-            self.NCAPS = 8 # can this be pulled from file?
-            self.fcnToCall = calcEachCapLineout
-            self.roiSumNumDims = 4
-            self.fcnPlot = prettyAllCapsInALine
 
         # ****************************************************
         elif self.strDescriptor == "Sweep_w_Background":
@@ -442,30 +428,44 @@ class dataObject:
         elif self.strDescriptor == "Sweep_Integ1":               
             # How does the slope of dark frames change as we change the interframe1 time? 
             # Set HW parameters
-            self.setname = 'xpad-scan_integ1_B27'
-            self.nFrames = 5  # frames Per Run  
+            self.setname = 'mpad-scan_integ4'
+            self.nFrames = 20  # frames Per Run  
+            self.NCAPS = 1
           
-            # We ARE 'allowed' to change delay param in a run (!)
             
-            self.integrationTime = 100 # 100ns
-            self.interframeTime = 100  # 100 ns - initial same on all.
-            
-            # create a list of commands to send to hardware via mmcmd 
-            unique_commands = [ 
-                "Cap_Select 0x1FF",
-            ]
-           
-            self.runVaryCommand="Readout_Delay"
-            self.varList = [0,50,100,150]
-            self.runFrameCommand = self.userFunctionB
-            self.innerVarList = [100,2100,6100,10100,20100]
-            self.innerVarCommand ="Integration_nsec[1]" # [0] does not work correctly BUG!
+            self.TakeBG = True
+            self.MessageBeforeBackground = "Close the SHUTTER."
+            self.MessageAfterBackground = "Open the shutter"
 
-            self.roi = [0, 7*16, 128, 16]
-            self.NCAPS = 8 # can this be pulled from file?
-            self.fcnToCall = calcEachCapLineout
-            self.roiSumNumDims = 4
-            self.fcnPlot = prettyAllCapsInALine    
+
+            
+            self.integrationTime = 15 # 15us
+            self.interframeTime = 100  # 100 us - initial same on all.
+           
+            self.runVaryCommand="Integration_USec"
+            self.varList = [15, 50, 100, 200, 300, 400, 500, 600, 700, 800, 
+                            900, 1000, 2000, 4000, 6000, 10000, 20000]
+            self.runFrameCommand = None
+            #self.innerVarList = [15, 100, 200, 500, 1000]
+            #self.innerVarCommand ="Integration_USec" 
+
+            #self.roi = [142,10,100,100] #  ASIC #1
+            self.roi = [395,9,100,100] # ASIC #3
+            
+            #self.roiB = [[10 + ix, 14 ,100, 100] for ix in range(4)]
+        
+            self.fcnToCall = calc1_MM
+            self.roiSumNumDims = 2
+            self.fcnPlot = prettyPlot_MM
+            self.fcnPlotOptions = {"xlabels": self.varList}
+
+            # MMPAD has no Cap_Select
+            # # create a list of commands to send to hardware via mmcmd 
+            unique_commands = [ 
+                "Trigger_Mode 2",     # HW trigger 
+                "Frame_Count 1"
+             ]
+
 
         # ****************************************************
         elif self.strDescriptor == "Cornell_Noise":               
@@ -557,7 +557,6 @@ class dataObject:
         # create a list of commands to send to hardware via mmcmd 
         self.list_commands = [
             "stop",
-            "Trigger_Mode 2",
             ## keck: f"Image_Count {self.nFrames}",
             ##mmpad
             f"Trigger_Count {self.nFrames}",
@@ -756,12 +755,12 @@ class dataObject:
                         fr"\set-{setname}/run-{runname}/frames/{runname}_{runBase:08d}.raw"
 
                 else:
-                    foreFile = f'/mnt/raid/keckpad/set-{setname}/run-{runname}/frames/{runname}_{runBase:08d}.raw'
+                    foreFile = f'{RAIDPATH}/set-{setname}/run-{runname}/frames/{runname}_{runBase:08d}.raw'
                 
                 self.fore = BKL.KeckFrame( foreFile , imgType = 'MMPAD')
                 if self.TakeBG:
-                    backFile = f'/mnt/raid/keckpad/set-{setname}/run-back/frames/back_{runBase:08d}.raw'
-                    self.back =  BKL.KeckFrame( backFile )
+                    backFile = f'{RAIDPATH}/set-{setname}/run-back/frames/back_{runBase:08d}.raw'
+                    self.back =  BKL.KeckFrame( backFile , imgType = 'MMPAD')
 
 
                 numImagesF = self.fore.numImages 
@@ -775,7 +774,17 @@ class dataObject:
                     numImagesF = self.nFrames  * self.NCAPS
 
 
+      
+                if roiSum is None:
+                    if self.roiSumNumDims == 2:
+                        roiSum = np.zeros((NRUNS,numImagesF // NCAPS),dtype=np.double)
+                    elif self.roiSumNumDims == 3:
+                        roiSum = np.zeros((NRUNS,numImagesF // NCAPS, self.roi[2]),dtype=np.double)
+
+
+
                 # create global big arrays to hold images
+                # was uint32
                 self.foreStack = np.zeros((numImagesF, 512,512),dtype=np.double)
 
 
@@ -1397,9 +1406,9 @@ def defineListOfTests():
     """
 
     lot = []
+    lot.append( ("Test_Positions", "Using SRS box - get a quick sweep used for testing") )
     lot.append( ("Sweep_SRS_BurstCount", "Using SRS box - adjust burst count to get linear intensity sweeps") )
-    lot.append( ("Sweep_Inter1", "Adjust inteframe time [1] - see if the gradient shapes change with delay (they dont)") )
-    lot.append( ("Sweep_Integ1", "Adjust integration time [1] - see if the gradient shapes change with delay (they dont)") )
+    lot.append( ("Sweep_Integ1", "Adjust integration time ") )
     lot.append( ("Sweep_w_Background", "Sweep linearity with SRS - and also take a background") )
     lot.append( ("Move_IR_Along_Caps", "SRS single bright pulse, moves from cap1 to cap 8") )
     lot.append( ("Move_IR_Along_Caps_2ROIS", "SRS single bright pulse, moves from cap1" \

@@ -1,4 +1,4 @@
- #!/usr/bin/env python3
+#!/usr/bin/env python3
 # File: keck_020_Analysis.py
 # Description - Create a list of analysis routines
 #
@@ -32,6 +32,10 @@
 #
 # INSTRUCTIONS
 #
+# Look for SAVE_TO_DISK.   
+# Set accordingly. True takes long time to take data and saves to PKL file.
+# False is fast and loads from PKL file.
+
 
 #
 # Issues with mmcmd - try this:
@@ -67,16 +71,40 @@ import time
 import UI_utils
 
 import configparser
+import pandas as pd
 
 
 #
 # Define some globals 
 #
 VERBOSE = 1 # 0 = quiet, 1 = print some, 2 = print a lot
+PREVIEW_IMAGE = 0 # 0 = no preview, 1 = preview each image as loaded
 #
 #
 # User edit settings
-RAIDPATH=r"\\SYDOR-NAS01\RawDataBackup\CHESS_Nov2024\sydor_keck_data"
+# Setting for 'Z drive'
+#RAIDPATH=r"\\SYDOR-NAS01\RawDataBackup\CHESS_Nov2024\sydor_keck_data"
+# Setting for local Mac
+RAIDPATH = '/Volumes/TOSHIBA EXT_Beige/CHESS_Nov2024/sydor_keck_data'
+
+#
+#  There are 7 RingWalk datums.  See https://docs.google.com/spreadsheets/d/1uVOXTLz-_K85X634gSuCnmFfIuGQfjPGFcuU3kh0qKk/edit?gid=817004952#gid=817004952
+# for ID 1 to 7
+#  Analyze RingWalk ID #
+#
+ARW_ID = 6 # 1  = Cornell_Tests_24-11-07_RW_FG_50ns_50ns
+#          2  = Cornell_Tests_24-11-07_RW_FG_100ns_50ns
+#          3  = Cornell_Tests_24-11-07_RW_FG_100ns_100ns    
+#          4 = Cornell_Tests_24-11-07_RW_FG_100ns_200ns
+#          5 = Cornell_Tests_24-11-06_RW_FG_150ns_200ns ! Missing data after TD340 :-(
+#          6 = Cornell_Tests_24-11-07_RW_FG_200ns_200ns        
+#          7= Cornell_Tests_24-11-07_RW_FG_300ns_200ns
+#
+#   Set below true to load files (takes a long time) and save to Pickle file
+#   Then re run with it set to False to load from Pickle file (fast)
+SAVE_TO_DISK = False    
+
+
 #\set-CornellTests_24-11-06\run-FG_CeO2_111_200_0p1ms_200ns_4"
 print(RAIDPATH)
 exit
@@ -87,16 +115,17 @@ exit
 # OOP the heck out of this
 class dataObject:
     def __init__(self, strDescriptor, 
-                 bTakeData=False, bAnalyzeData = False):
+        bTakeData=False, bAnalyzeData = False):
         self.strDescriptor = strDescriptor
         self.dg = None  # Optional Delay Generator
         self.TakeBG = False
         self.MessageBeforeBackground = None
         self.MessageAfterBackground = None
-        self.fcnPlotOptions = None
+        self.fcnPlotOptions = {}
         self.runVaryCommand = None
         self.delayBetweenRuns = None
-
+        self.pickleFilename = "DUMP"
+        
         # below sets run specific values
         self.createObject()
 
@@ -104,6 +133,16 @@ class dataObject:
         self.bTakeData = bTakeData
         self.bAnalyzeData = bAnalyzeData
         self.TEST_ON_MAC =  False
+
+        # You must set these manually . Set bSaveToDisk once to run the 
+        # long operation once, and save to PKL file.
+        # Then set it false, and set bLoadFromDisk to use the PKL file.    
+        self.bSaveToDisk = SAVE_TO_DISK
+        self.bLoadFromDisk =  not self.bSaveToDisk
+        #
+        #
+        #
+
         
 
         # Some routine use an SRS DG645 box:
@@ -125,40 +164,6 @@ class dataObject:
             
         
 
-        
-        
-
-
-
-    #
-    # userFunction is called for each frame of a run ( assumes an external trigger )
-    #
-    def usrFunction_DGCmd( self,nLoop ):
-        """ nLoop is the frame number. 
-        Send a command to DG SRS at each frame - assumes Ext trigger.
-        """
-        
-        print(f"Called userFunction n={nLoop}")
-        self.dg.counter  = nLoop + 1
-        c  = f"{self.innerVarCommand} {self.innerVarList[nLoop]}"  
-        
-        #s = f"BURC {self.dg.counter}" # Set the burst Count
-        self.dg.send(c);
-        self.dg.doTrigger()
-        
-    #
-    # userFunction is called for each frame of a run ( assumes an external trigger )
-    #
-    def userFunctionB( self, nLoop ):
-        """ nLoop is the frame number. 
-        Send a command to xPAD at each frame.
-        """ 
-        print(f"Called userFunctionB n={nLoop}")
-        c  = f"{self.innerVarCommand} {self.innerVarList[nLoop]}"  
-        
-        res = xd.run_cmd(c)
-        self.dg.doTrigger()
-
 
     def createObject(self):
         # ****************************************************
@@ -172,32 +177,321 @@ class dataObject:
         # ****************************************************
         # ****************************************************
         if self.strDescriptor == "Analyze_CeO2":
+
+
             self.setname = 'CornellTests_24-11-06'
                               
             self.runnames = [f'FG_CeO2_111_200_0p{j+1}ms_200ns_{j+4}' for j in range(9)]
             self.runnames += [f'FG_CeO2_111_200_{j+1}ms_200ns_{j+13}' for j in range(5)]
 
-            self.nFrames = 17-3 # debug 17-4  # frames Per Run
-            #TODO - set ROI as needed            
-            self.roi = [90, 60, 10, 10]
+            self.nFrames = 9 + 5  # is the full data set. 
+                  
+            
+            self.roi = [183,314,15,15]
             self.NCAPS = 8 # can this be pulled from file?
             self.fcnToCall = calcLinearity
-            self.roiSumNumDims = 3  # use fourth dim to hold integration times
-            self.fcnPlot = prettyPlot
+            self.roiSumNumDims = 3  #
+            ###self.roiSum_AttributeType = "ave,stdev" # make up a string that indicates the 
+            #  typeof data this arrauy will hold.
+            
+           
             self.varList = [i+4 for i in range(self.nFrames)]
             self.TakeBG = True   # Will load in a background
             self.back_runnames = [f'BG_CeO2_111_200_0p{j+1}ms_200ns' for j in range(9)]
             self.back_runnames += [f'BG_CeO2_111_200_{j+1}ms_200ns' for j in range(5)]
+    
             self.x_axis_values = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 2, 3, 4, 5]
             self.x_axis_values = self.x_axis_values[:self.nFrames] # clip if testing a subset 
             
-            self.fcnPlotOptions = self.x_axis_values # this work?
-
-
-
-  
-        
             
+            self.fcnPlotOptions["x_axis_values"] = self.x_axis_values
+            self.fcnPlotOptions["x_axis_label"] = "Integration Time (ms)"
+            self.fcnPlotOptions["title"] = "Counts vary linearly with integration time"
+            self.fcnPlotOptions["energy_correction_filename"]  = "YFPlayground/Keck020_LLNL/Energy_Correction.csv"
+            
+        ##) 
+
+
+             # Pass in the x axis values to plot.
+            self.fcnPlot = prettyPlot
+            self.pickleFilename = f"CeO2_Integ_scan"
+
+           
+        # ****************************************************
+        # *******************222222***************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        elif self.strDescriptor == "Analyze_RingWalk":
+            
+
+
+            self.runnames = [f'scan_TD_{td}' for td in range(110,510,10)]
+            self.nFrames = len ( self.runnames )  
+            self.roiSumNumDims = 3  #
+            self.varList = [i for i in range(self.nFrames)]
+            self.integ = 0
+            self.inter = 0
+
+            self.TakeBG = True   # Will load in a background
+
+            self.debounce = True   # new code to debounce
+
+            if ARW_ID == 1:
+                self.roi = [279,188,2,2]  # Verify the spot doesn't move from run to run (!)
+                self.setname = 'Cornell_Tests_24-11-07_RW_FG_50ns_50ns'
+                # Ringwalks have their own background set!
+                self.backSetName = 'Cornell_Tests_24-11-07_RW_BG_50ns_50ns'
+                self.backRunName = 'back'
+                self.integ = 50
+                self.inter = 50
+
+            elif ARW_ID == 2:
+                self.roi = [279,188,2,2]  # Verify the spot doesn't move from run to run (!)
+                self.setname = 'Cornell_Tests_24-11-07_RW_FG_100ns_50ns'
+                # Ringwalks have their own background set!
+                self.backSetName = 'Cornell_Tests_24-11-07_RW_BG_100ns_50ns'
+                self.backRunName = 'Back'  # !F
+                self.integ = 100
+                self.inter = 50
+
+            elif ARW_ID == 3:
+                self.roi = [279,188,2,2]  # Verify the spot doesn't move from run to run (!)
+                self.setname = 'Cornell_Tests_24-11-07_RW_FG_100ns_100ns'
+                # Ringwalks have their own background set!
+                self.backSetName = 'Cornell_Tests_24-11-07_RW_BG_100ns_100ns'
+                self.backRunName = 'back'  
+                self.integ = 100
+                self.inter = 100    
+
+            elif ARW_ID == 4:
+                self.roi = [279,188,2,2]  # Verify the spot doesn't move from run to run (!)
+                self.setname = 'Cornell_Tests_24-11-07_RW_FG_100ns_200ns'
+                # Ringwalks have their own background set!
+                self.backSetName = 'Cornell_Tests_24-11-07_RW_BG_100ns_200ns'
+                #self.backRunName = 'back'   ! oops F!
+                #del self.backRunName
+                self.integ = 100
+                self.inter = 200        
+                self.back_runnames =  self.runnames
+
+            elif ARW_ID == 5:
+                self.roi = [279,188,2,2]  # Verify the spot doesn't move from run to run (!)
+                self.setname = 'Cornell_Tests_24-11-07_RW_FG_150ns_200ns'
+                # Ringwalks have their own background set!
+                self.backSetName = 'Cornell_Tests_24-11-07_RW_BG_150ns_200ns'
+                self.backRunName = 'back'  
+                self.integ = 150
+                self.inter = 200        
+                
+            elif ARW_ID == 6:
+                self.roi = [279,188,2,2]  # Verify the spot doesn't move from run to run (!)
+                self.setname = 'Cornell_Tests_24-11-07_RW_FG_200ns_200ns'
+                # Ringwalks have their own background set!
+                self.backSetName = 'Cornell_Tests_24-11-07_RW_BG_200ns_200ns'
+                self.backRunName = 'back-002'  
+                self.integ = 200
+                self.inter = 200        
+
+            elif ARW_ID == 7:
+                # Extended run
+                self.runnames = [f'scan_TD_{td}' for td in range(110,650+10-10,10)] 
+                # 650 run is missing one frame, so skip it,               ^-10
+                self.nFrames = len ( self.runnames )  
+                self.roiSumNumDims = 3  #
+                self.varList = [i for i in range(self.nFrames)]
+
+
+                self.roi = [279,188,2,2]  # Verify the spot doesn't move from run to run (!)
+                self.setname = 'Cornell_Tests_24-11-07_RW_FG_300ns_200ns'
+                # Ringwalks have their own background set!
+                self.backSetName = 'Cornell_Tests_24-11-07_RW_BG_300ns_200ns'
+                self.backRunName = 'back'  
+                self.integ = 300
+                self.inter = 200        
+
+            else:
+                raise Exception(" !Unknown ARW_ID! ")
+
+
+                
+            self.NCAPS = 8 # can this be pulled from file?
+            self.fcnToCall = calcLinearity 
+            self.fcnPlot = ringWalkPlot   
+            self.pickleFilename = f"ringwalk_{ARW_ID}"
+
+
+            self.fcnPlotOptions["integ"] = self.integ
+            self.fcnPlotOptions["inter"] = self.inter
+            self.fcnPlotOptions["title"] = f"RingWalk. Plot intensity "\
+                f"versus delay.Integ = {self.integ} ns, Inter = {self.inter} ns"
+
+
+           
+        # ****************************************************
+        # ******************* 333333 *************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        elif self.strDescriptor == "Ruby_integ_scan":
+
+            self.setname = 'Cornell_Tests_24-11-08_INT_LIN_G1p0_Att00_TD0p2'
+            # /run-BG_0p1us_100ns'
+            #'set-/run-FG_0p1us_100ns'
+
+            self.runnames = [f'FG_{x}us_100ns' for x in ["10","5","2","1", "0p5", "0p2", "0p1", "0p05"] ]
+       
+
+            self.nFrames = len(self.runnames)
+                  
+            
+            self.roi = [270,181,25,25]
+            self.NCAPS = 8 # can this be pulled from file?
+            self.fcnToCall = calcLinearity
+            self.roiSumNumDims = 3  #
+
+
+            self.varList = [i for i in range(self.nFrames)]
+            self.TakeBG = True   # Will load in a background
+            self.backSetName = "Cornell_Tests_24-11-08_INT_LIN_G1p0_Att00"
+            self.back_runnames = [name.replace("FG_", "BG_") for name in self.runnames]
+
+            
+    
+            self.x_axis_values = [10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05]
+            self.x_axis_values = self.x_axis_values[:self.nFrames] # clip if testing a subset 
+            
+            
+            self.fcnPlotOptions["x_axis_values"] = self.x_axis_values
+            self.fcnPlotOptions["x_axis_label"] = "Integration Time (ms)"
+            self.fcnPlotOptions["title"] = "Counts vs integration time"    
+            self.fcnPlotOptions["energy_correction_filename"]  = "YFPlayground/Keck020_LLNL/EC_Ruby.csv"
+                
+
+             # Pass in the x axis values to plot.
+            self.fcnPlot = prettyPlot
+            self.pickleFilename = f"ruby_integ_scan"
+
+
+        # ****************************************************
+        # ******************* 4444444 ************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        elif self.strDescriptor == "Ruby_gain-lin":
+
+
+            self.setname = 'Cornell_Tests_24-11-08_GAIN_bright_LIN_Att00_TD0p2'
+            # /run-BG_0p1us_100ns'
+            #'set-/run-FG_0p1us_100ns'
+            gains = ["G1p0", "G0p429", "G0p250", "G0p153"]
+            times = ["10", "5", "2", "1", "0p5", "0p2", "0p1", "0p05"]
+
+            self.runnames = [f'FG_{t}us_100ns_{g}' for t in times for g in gains]
+
+            self.nFrames = len(self.runnames)
+                  
+            
+            self.roi = [283,187,2,2] 
+            self.NCAPS = 8 # can this be pulled from file?
+            self.fcnToCall = calcLinearity
+            self.roiSumNumDims = 3  #
+
+
+            self.varList = [i for i in range(self.nFrames)]
+            self.TakeBG = True   # Will load in a background
+            self.backSetName = self.setname
+            self.back_runnames = [name.replace("FG_", "BG_") for name in self.runnames]
+
+            
+    
+            self.x_axis_values = [x for x in [10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05] for _ in range(4)]
+            self.x_axis_values = self.x_axis_values[:self.nFrames] # clip if testing a subset 
+            
+            
+            self.fcnPlotOptions["x_axis_values"] = self.x_axis_values
+            self.fcnPlotOptions["x_axis_label"] = "Normalized Values versus Gain"
+            self.fcnPlotOptions["title"] = "Counts vs integration time & gain"    
+            self.fcnPlotOptions["energy_correction_filename"]  = "YFPlayground/Keck020_LLNL/Gain_Lin.csv"
+                
+
+             # Pass in the x axis values to plot.
+            self.fcnPlot = prettyPlot2
+            self.pickleFilename = f"ruby_gain_scan"
+
+        # ****************************************************
+        # ******************* 5555555 ************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************
+        # ****************************************************            
+        elif self.strDescriptor == "Atten_Lin":
+
+            #'/Volumes/TOSHIBA EXT_Beige/CHESS_Nov2024/sydor_keck_data/set-/'
+            self.setname = 'Cornell_Tests_24-11-08_ATT_LIN_G0p1_TD0p2'
+            gains = ["G1p0", "G0p429", "G0p250", "G0p153"]
+            times = ["10", "5", "2", "1", "0p5", "0p2", "0p1", "0p05"]
+            # run-FG_5us_100ns_att0-0
+            self.runnames = [f'FG_5us_100ns_att{x}' for x in ["0-0", "1-0", "5-0", \
+                "10-0", "13-0", "15-0", "17-0", "0-1", "0-4", "0-7", "0-10"]
+                
+                ]
+
+            self.nFrames = len(self.runnames)
+                  
+            
+            self.roi = [280,184,7,7]  
+            self.NCAPS = 8 # can this be pulled from file?
+            self.fcnToCall = calcLinearity
+            self.roiSumNumDims = 3  #
+
+
+            self.varList = [i for i in range(self.nFrames)]
+            self.TakeBG = True   # Will load in a background
+            # '/Volumes/TOSHIBA EXT_Beige/CHESS_Nov2024/sydor_keck_data/set-Cornell_Tests_24-11-08_ATT_LIN_G0p1_TD0p2/run-BG_5us_100ns/frames/BG_5us_100ns_00000001.raw'
+
+            self.backSetName = self.setname
+            self.backRunName ="BG_5us_100ns"
+
+            
+    
+            self.x_axis_values = [x for x in range( self.nFrames)]
+            self.x_axis_values = self.x_axis_values[:self.nFrames] # clip if testing a subset 
+            
+            
+            self.fcnPlotOptions["x_axis_values"] = self.x_axis_values
+            self.fcnPlotOptions["x_axis_label"] = "TODO"
+            self.fcnPlotOptions["title"] = "Counts vs External Attenuation"    
+            self.fcnPlotOptions["energy_correction_filename"]  = "YFPlayground/Keck020_LLNL/Atten_Lin.csv"
+                
+
+             # Pass in the x axis values to plot.
+            self.fcnPlot = prettyPlot3
+            self.pickleFilename = f"ruby_atten_lin"
+            self.rejectInvalidPixels = True
+
+
+           
+            #        
         else:
              raise Exception(" !Unknown string! ") 
 
@@ -368,6 +662,8 @@ class dataObject:
         Load up the runs, and analyze
         """
 
+       
+
         setname = self.setname
         
         NRUNS = len(self.varList) 
@@ -383,61 +679,95 @@ class dataObject:
             runBase = 1
             backFile = None
             
+            if self.bSaveToDisk:
 
-            for runnum in range(NRUNS):
-                runname = self.runnames[runnum]
-                
-                if self.TEST_ON_MAC: # Local Mac testing!
-                    foreFile = f'/Users/yoram/Sydor/keckpad/30KV_1.5mA_40ms_f_00015001.raw' # check not sure...
+                for runnum in range(NRUNS):
+                    runname = self.runnames[runnum]
                     
-                else:
-                    foreFile = f'{RAIDPATH}/set-{setname}/run-{runname}/frames/{runname}_{runBase:08d}.raw'
+                    if self.TEST_ON_MAC: # Local Mac testing!
+                        foreFile = f'/Users/yoram/Sydor/keckpad/30KV_1.5mA_40ms_f_00015001.raw' # check not sure...
+                        
+                    else:
+                        foreFile = f'{RAIDPATH}/set-{setname}/run-{runname}/frames/{runname}_{runBase:08d}.raw'
+                        
                     
-                
-                self.fore = BKL.KeckFrame( foreFile )
-                if self.TakeBG and self.back_runnames:
-                    back_runname = self.back_runnames[runnum]
-                    backFile = f'{RAIDPATH}/set-{setname}/run-{back_runname}/frames/{back_runname}_{runBase:08d}.raw'
-                    self.back =  BKL.KeckFrame( backFile )
+                    self.fore = BKL.KeckFrame( foreFile )
+                    if self.TakeBG:
 
-                if VERBOSE:
-                    print(f"Loaded up file: {foreFile}")
+                        if  hasattr(self, 'backSetName') :
+                            backSetName = self.backSetName
+                            if  hasattr(self,'backRunName'):   
+                                backFile = f'{RAIDPATH}/set-{backSetName}/run-{self.backRunName}/frames/{self.backRunName}_{runBase:08d}.raw'
+                            else:
+                                back_runname = self.back_runnames[runnum]
+                                backFile = f'{RAIDPATH}/set-{backSetName}/run-{back_runname}/frames/{back_runname}_{runBase:08d}.raw'
 
-                numImagesF = self.fore.numImages 
+                            self.back =  BKL.KeckFrame( backFile )
 
-                if self.nFrames  * self.NCAPS > 1000:
-                    # we need to read mutiple raw files - only 1000 per file.
-                    self.readAdditionalFiles = {
-                        "baseFilenameF" : foreFile[:-12], "nJumpBy":1000,
-                        "baseFilenameB" : backFile[:-12] if backFile else None
-                    }
-                    numImagesF = self.nFrames  * self.NCAPS
-
-
-                
-                if roiSum is None:
-                    if self.roiSumNumDims == 3:
-                        roiSum = np.zeros((NRUNS,numImagesF // NCAPS, NCAPS),dtype=np.double)
-                    elif self.roiSumNumDims == 4:
-                        roiSum = np.zeros((NRUNS,numImagesF // NCAPS, NCAPS, self.roi[2]),dtype=np.double)
-
-
-                            
+                        elif self.back_runnames:
+                            back_runname = self.back_runnames[runnum]
+                            backFile = f'{RAIDPATH}/set-{setname}/run-{back_runname}/frames/{back_runname}_{runBase:08d}.raw'
+                            self.back =  BKL.KeckFrame( backFile )
+                        else:
+                            raise Exception(" No background run name defined ")
                         
 
-                # create global big arrays to hold images
-                self.foreStack = np.zeros((numImagesF // NCAPS, NCAPS,512,512),dtype=np.double)
+                    if VERBOSE:
+                        print(f"Loaded up file: {foreFile}")
+                        if (self.back):
+                            print(f"Loaded up background file: {backFile}")
 
 
-                # Each time called, builds up data in data var/ roiSum.
-            
-                roiSum = self.fcnToCall( self, data = roiSum, runnum = runnum)
+                    numImagesF = self.fore.numImages 
 
-                if self.runVaryCommand:
-                    title = f"{self.runVaryCommand} {self.varList}"
+                    if self.nFrames  * self.NCAPS > 1000:
+                        # we need to read mutiple raw files - only 1000 per file.
+                        self.readAdditionalFiles = {
+                            "baseFilenameF" : foreFile[:-12], "nJumpBy":1000,
+                            "baseFilenameB" : backFile[:-12] if backFile else None
+                        }
+                        numImagesF = self.nFrames  * self.NCAPS
 
-            
-            #ENDFOR
+
+                    
+                    if roiSum is None:
+                        if self.roiSumNumDims == 3:
+                            roiSum = np.zeros((NRUNS,numImagesF // NCAPS, NCAPS),dtype=np.double)
+                        elif self.roiSumNumDims == 4:
+                            roiSum = np.zeros((NRUNS,numImagesF // NCAPS, NCAPS, self.roi[2]),dtype=np.double)
+
+                        # if self.roiSum_AttributeType == "ave,stdev"  :
+                        #     # Allocate 0 index for AVE and 1 index for STDEV
+                        #     roiSum = np.zeros((NRUNS,numImagesF // NCAPS, NCAPS, 2),dtype=np.double)  
+                        # else:
+                        #     raise Exception("Unknown roiSum_AttributeType")
+                            
+
+                    # create global big arrays to hold images
+                    self.foreStack = np.zeros((numImagesF // NCAPS, NCAPS,512,512),dtype=np.double)
+
+
+                    # Each time called, builds up data in data var/ roiSum.
+                
+                    roiSum = self.fcnToCall( self, data = roiSum, runnum = runnum)
+
+                    if self.runVaryCommand:
+                        title = f"{self.runVaryCommand} {self.varList}"
+
+                
+                #ENDFOR
+
+                saveData(roiSum, self.pickleFilename, options = None)
+                exit(0)
+
+
+
+            elif self.bLoadFromDisk:
+                # Load from Pickle file
+                roiSum = loadData( self.pickleFilename)
+                title =  self.fcnPlotOptions["title"] 
+              
+
             if hasattr(self, "newTitle"):
                 title = self.newTitle + ":" + title
 
@@ -543,7 +873,7 @@ def imagePlots(dobj, img, title):
     fig.suptitle(title)
 
     #  CLIPPING  If std dev plot appears at a fixed value it is becauyse it is clipped here
-    vmin= 0
+    vmin= -40
     vmax = 40
 
     for indexVal in range(8):
@@ -569,358 +899,413 @@ def imagePlots(dobj, img, title):
     plt.tight_layout()
 
     
-    
+def loadData( fname):
+    """ 
+    Load data from a pickle file
+    """
+    filename = "DUMP.pkl" if fname is None else fname.replace(" ","_") + ".pkl" 
+    with open(filename, 'rb') as f:
+        data = pickle.load(f)
+    print(f"Loaded data from {filename}")
+    return data     
+
+
 
     
+def saveData(data, fname, options = None):
+    """ 
+    Save data to a pickle file
+    """
+    filename = "DUMP.pkl" if fname is None else fname.replace(" ","_") + ".pkl" 
+
+    with open(filename, 'wb') as f:
+        pickle.dump(data, f)
+    print(f"Saved data to {filename}")
+
+
+#
+# 
+#  data is 3 dimensions: data should be [nRuns, nFrames, nCaps] 
+#     options {"integ": #, "inter":#}
+#
+def ringWalkPlot(data, title, options:dict):
+    nruns = data.shape[0]
+    nframes = data.shape[1]
+    ncaps = data.shape[2]
+    dT = 10 # time between runs in ns
+
+    phase = 0
+    SHOW_EVERY_TRACE = 0
+
+    # Require  dict with these defined
+    integTime = options["integ"]     
+    interTime = options["inter"]     
+    plt.figure(figsize=(8, 5))  # width=8 inches, height=5 inches
+    
+    colors = ['r', 'orange','y', 'g', 'b', 'violet', 'indigo', 'black'] 
+    for c in range(ncaps):
+        phase = 0
+        xvalue = np.zeros(nruns)
+        if SHOW_EVERY_TRACE:
+            yvalue = np.zeros( (nruns,nframes) ) 
+        else:    
+            yvalue = np.zeros( (nruns,2) ) 
         
+        for n in range(nruns):
+            phase +=   dT # in ns              
+       
+            cphase = phase + (integTime + interTime)* c # assumes integ and inter are constant
+            xvalue[n] = cphase
             
-  
+            if SHOW_EVERY_TRACE:
+                yvalue[n] = data[n, :, c]
+            else:
+                stddev = np.std(data[n, :, c])
+                yvalue[n] = [np.mean(data[n, :, c])+stddev, np.mean(data[n, :, c])- stddev]
+                
+        #plt.plot( xvalue, yvalue,  
+        #         color = colors[c], label = f"Cap {c+1}" )
+        
+
+        plt.plot(xvalue, yvalue, color=colors[c])
+        # only label once
+        plt.plot([], [], color=colors[c], label=f"Cap {c+1}")
+            
+        # endfor c
+    # endfor n     
+
+    
+    plt.xlabel("Delay in (ns)")
+    plt.ylabel("Mean ADU")
+    plt.title(title)
+    
+    #plt.legend(loc='upper right', bbox_to_anchor=(1, 0.5))
+    plt.legend(loc='upper right', bbox_to_anchor=(1.1, 1))
+   
+    plt.grid()
+    plt.show(block = False)    
+                   
+
+
+
+#
+#  This version used to plot Atten_Lin data
+#
+def prettyPlot3(data, title, options:dict):
+    nruns =  len(data)
+    ncaps = len(data[0,0] )
+    fig, ax = plt.subplots()
+    #plt.figure(1)
+    
+    stdev = np.zeros(nruns,dtype=np.double)
+    bestfit = np.zeros( (ncaps,2),dtype=np.double)
+
+    
+    colors = ['r', 'orange','y', 'g', 'b', 'violet', 'indigo', 'black'] 
+    nframes = len(data [0])
+    values = np.zeros(nframes,dtype=np.double)
+
+    norm_diode = readCSV(options["energy_correction_filename"] )  # read in the diode values for normalization
+
+      
+    #
+    assert len(norm_diode) == nruns, "Diode values do not match number of runs"
+    #
+
+    xrange = [i for i in range(11)]
+    # 5 categories
+    categories = ["att0-0", "att1-0", "att5-0", "att10-0", "att13-0", "att15-0", "att17-0",\
+         "att0-1", "att0-4", "att0-7", "att0-10"]
+    n_per_category = nframes
+
+    gain_factor = [1.00, 8.22E-01, 5.73E-01, 3.19E-01, 1.74E-01, 9.21E-02, \
+        2.43E-02, 9.11E-03, 8.08E-04, 9.94E-05, 1.03E-05]
+    # Gain factors from LLNL calibration file
+
+
+
+    normalizeValue = np.average(data[0, :, 0]) / norm_diode[0]
+    for c in range(ncaps):
+        for j in range(nruns):  
+            n = j +  0
+           
+            # Divide data by the normalized diode value for that run
+            values = (data[n, :, c]) / norm_diode[n] / normalizeValue  / gain_factor[j]
+            x_positions = [j*1 + (i/nframes)*0.9 for i in range(nframes)]
+            
+            
+            # label only once per capacitor (for legend)
+            if n == 0:
+                plt.scatter(x_positions, values, color=colors[c], label=f"Cap:{c+1}", s=15)
+            else:
+                plt.scatter(x_positions, values, color=colors[c], s=15)
+        
+       
+        # Make category ticks and labels
+        plt.xticks(range(len(categories)), categories)
+
+        plt.xlabel("Attenuation Category")
+        plt.ylabel("Normalized Value to Att0-0, Cap1")
+        plt.title("Values by Gain Category")
+
+        plt.ylim(0, 2)   # set y-axis limits
+
+        
+        # # X range for the overlay lines
+        # x = [1-.1, 2+.1]
+
+        # # Y positions for the horizontal lines
+        # y_values = [0.429, 0.250, .153]
+        # # Gain is "1.0", "0.429", ".250", ".153"
+
+        # # Plot each overlay line
+        # for i,y in enumerate(y_values):
+        #     plt.plot(x, [y, y], linestyle='--', color='red', alpha=0.7)
+        #     x = [val + 1 for val in x]
+                
+        plt.legend()
+            
+    # plt.xlabel( options["x_axis_label"] if options and "x_axis_label" in options else 'N' )
+
+    # plt.ylabel('mean (ADU)')
+    # plt.title( options["title"] if options and "title" in options else title)
+    # ax.yaxis.set_minor_locator( MultipleLocator(1000))
+
+     
+
+    plt.show(block= True) 
+
+
+
+
+
+#
+#  This version used to plot cap gain
+#
+def prettyPlot2(data, title, options:dict):
+    nruns =  4 ## len(data)
+    ncaps = len(data[0,0] )
+    fig, ax = plt.subplots()
+    #plt.figure(1)
+    
+    stdev = np.zeros(nruns,dtype=np.double)
+    bestfit = np.zeros( (ncaps,2),dtype=np.double)
+
+    
+    colors = ['r', 'orange','y', 'g', 'b', 'violet', 'indigo', 'black'] 
+    nframes = len(data [0])
+    values = np.zeros(nframes,dtype=np.double)
+
+    norm_diode = readCSV(options["energy_correction_filename"] )  # read in the diode values for normalization
+
+      
+    #
+    ###assert len(norm_diode) == nruns, "Diode values do not match number of runs"
+    #
+
+    xrange = [1,2,3,4]
+    # 4 categories
+    categories = ["gain1", "gain2", "gain3", "gain4"]
+    n_per_category = nframes
+
+    ExposureRunIndex = 8 #  0 = 10us, 4 = 5us, 8=2us, 12=1us
+    normalizeValue = np.average(data[ExposureRunIndex, :, 0]) / norm_diode[ExposureRunIndex]
+    for c in range(ncaps):
+        for j in range(nruns):  # only first 4 runs
+            n = j +  ExposureRunIndex
+            # average the mean over all n frames
+            # Divide data by the normalized diode value for that run
+            values = (data[n, :, c]) / norm_diode[n] / normalizeValue
+            x_positions = [j*1 + (i/nframes)*0.9 for i in range(nframes)]
+            #stdev[n] = np.std(data[n, :, c]/ norm_diode[n] )
+            #DEBUG  
+            #print("DEBUG:")
+            #print(    f"{data[n, :, c]}")     
+            #print(f"AVE: {averageOverFrames[n]} , STDEV: {stdev[n]}")
+
+    
+            
+            # label only once per capacitor (for legend)
+            if n == 0:
+                plt.scatter(x_positions, values, color=colors[c], label=f"Cap:{c+1}", s=15)
+            else:
+                plt.scatter(x_positions, values, color=colors[c], s=15)
+        
+       
+        # Make category ticks and labels
+        plt.xticks(range(len(categories)), categories)
+
+        plt.xlabel("Gain Category")
+        plt.ylabel("Normalized Value to Gain 1.0, Cap1")
+        plt.title("Values by Gain Category")
+
+        
+        # X range for the overlay lines
+        x = [1-.1, 2+.1]
+
+        # Y positions for the horizontal lines
+        y_values = [0.429, 0.250, .153]
+        # Gain is "1.0", "0.429", ".250", ".153"
+
+        # Plot each overlay line
+        for i,y in enumerate(y_values):
+            plt.plot(x, [y, y], linestyle='--', color='red', alpha=0.7)
+            x = [val + 1 for val in x]
+                
+        plt.legend()
+            
+    # plt.xlabel( options["x_axis_label"] if options and "x_axis_label" in options else 'N' )
+
+    # plt.ylabel('mean (ADU)')
+    # plt.title( options["title"] if options and "title" in options else title)
+    # ax.yaxis.set_minor_locator( MultipleLocator(1000))
+
+     
+
+    plt.show(block= True) 
+
+
+
 
 #
 # Plot <n> caps. Plot mean of ROI versus frame number
-#  data is 3 dimensions: data should be [nRuns, nFrames, nCaps]
-# options can be self.x_axis_values[]
-def prettyPlot(data, title, options = None):
+#  data is 3 dimensions: data should be [nRuns, nFrames, nCaps] 
+# options is a dictionary. Currently recognizes:
+#    {"x_axis_values" : [array of value]
+#    {"x_axis_label" : <string> }
+#    {"title" : <string> }
+def prettyPlot(data, title, options:dict):
     nruns = len(data)
     ncaps = len(data[0,0] )
     fig, ax = plt.subplots()
     #plt.figure(1)
     averageOverFrames = np.zeros(nruns,dtype=np.double)
+    stdev = np.zeros(nruns,dtype=np.double)
+    bestfit = np.zeros( (ncaps,2),dtype=np.double)
+
     
     colors = ['r', 'orange','y', 'g', 'b', 'violet', 'indigo', 'black'] 
     nframes = len(data [0])
-    
+
+    norm_diode = readCSV(options["energy_correction_filename"] )  # read in the diode values for normalization
+
+      
+    #
+    assert len(norm_diode) == nruns, "Diode values do not match number of runs"
+    #
+
     xrange = range(nruns)
-    if options is not None:
-        arr = np.array(options)
-        if arr.ndim == 1 and np.issubdtype(arr.dtype, np.floating):
-            xrange = options
-            # options is a 1D array of floats
-            pass
+    if options and "x_axis_values" in options:
+        xrange = options["x_axis_values"]  # HERE x values can get passed in here
+        # options is a 1D array of floats
+        pass
     for c in range(ncaps):
         for n in range(nruns):
             
             # average the mean over all n frames
-            averageOverFrames[n] = np.average(data[n, :, c])
+            # Divide data by the normalized diode value for that run
+            averageOverFrames[n] = np.average(data[n, :, c]) / norm_diode[n]
+            stdev[n] = np.std(data[n, :, c]/ norm_diode[n] )
+            #DEBUG  
+            #print("DEBUG:")
+            #print(    f"{data[n, :, c]}")     
+            #print(f"AVE: {averageOverFrames[n]} , STDEV: {stdev[n]}")
 
         lbl = f"Cap:{c+1}"   
-        ax.plot( xrange,  averageOverFrames[:], 
-                color=colors[c], label = lbl )
+        
 
+
+        # Create a line plot with error bars
+        ax.errorbar(
+            xrange,
+            averageOverFrames,
+            yerr=stdev,
+            color=colors[c],
+            label=lbl,
+            capsize=3,     # adds little caps on error bars
+            linewidth=1.5, # optional styling
+        )
+
+        # fit data to a line
+        # store result for later
+        bestfit[c] = np.polyfit(xrange, averageOverFrames, 1)
+        ##p = np.poly1d(z)
+        ##print(f"Fit to line: {p}")
+        ##ax.plot(xrange, p(xrange), "k--", label="Fit to line")
 
     plt.legend()
-    plt.xlabel('N')
+    plt.xlabel( options["x_axis_label"] if options and "x_axis_label" in options else 'N' )
+
     plt.ylabel('mean (ADU)')
-    plt.title( title )
+    plt.title( options["title"] if options and "title" in options else title)
     ax.yaxis.set_minor_locator( MultipleLocator(1000))
 
     
-    #plt.show(block= True) 
+    print (bestfit) # should be 8 x [slope,offset]
 
-
-
-#
-# Plot <n> caps. Plot mean of ROI versus frame number
-#  data is 3 dimensions: data should be [nRuns, nFrames, nCaps]
-# like prettyplot, but each run is appended in the list along the x axis
-def prettyPlot_TODO(data, title, options = None):
-    nruns = len(data)
-    ncaps = len(data[0,0] )
-    fig, ax = plt.subplots()
-    #plt.figure(1)
-
-    for n in range(nruns):    
-        nframes = len(data [0])
-        for c in range(ncaps):
-
-            x = .5 +.5*(n / (nruns))
-            if c%5 == 0:
-                clr = (x,0,0)
-            elif c%5 == 1:
-                clr = (x,x,0)
-            elif c%5 == 2:
-                clr = (0,x,0)
-            elif c%5 == 3:
-                clr = (0,x,x)
-            elif c%5 == 4:
-                clr = (0,0,x)
-
-            lbl = ""
-            if n == 0:
-                lbl = f"Cap:{c+1}"   
-
-            xrange = range(n*nframes, (n+1)*nframes, 1)     
-
-            ax.plot( xrange, data[n,:,c], 
-                color=clr, label = lbl )
-
-
-    plt.legend()
-    plt.xlabel('N')
-    plt.ylabel('mean (ADU)')
-    plt.title( title )
-    ax.yaxis.set_minor_locator( MultipleLocator(1000))
-
-    
-    #plt.show(block= True) 
-
-#
-#   TODO
-#
-def prettyCapVsFrame(data, title, options = None):
-    """
-    data should be [nRuns, nFrames, nCaps, Width_of_lineout]
-    optional fcnPlotOptions = {"waterfall":5000}
-    """
-    nruns = len(data)
-
-    fig, ax = plt.subplots()
-    #plt.figure(1)
-    nframes = len(data[0])
-    ncaps = len(data[0,0] )
-    dataWidth = len(data[0,0,0])
-    deltaY = 0
-    c = 1
-
-    for n in range(nruns):     
-        for f in range(nframes):
-            d = []    
-            d.extend( f*deltaY + data[n, f, c, :])
-            
-            x = .5 +.5*(f / (nframes-1))
-            if f%3 == 0:
-                clr = (x,0,0)
-            elif f%3 == 1:    
-                clr = (0,x,0)
-            elif f%3 == 2:
-                clr = (0,0,x)
-
-            ax.plot( range(len(d)), d, color=clr, linewidth=0.5,
-            label=f"Run{n}" if f ==0 else "" )
-
-
-
-    plt.legend()
-    plt.xlabel(f'Cap{c} versus Frame')
-    plt.ylabel('Ave (ADU)')
-    plt.title( title )
-    ax.yaxis.set_minor_locator( MultipleLocator(1000))
-    #plt.show(block=True) 
-
-
-#
-#   Data has <NCAPS> lineouts.  Line them all up into one lineout per image 
-#
-def prettyAllCapsInALine(data, title, options = None):
-    """
-    data should be [nRuns, nFrames, nCaps, Width_of_lineout]
-    optional fcnPlotOptions = {"waterfall":5000}
-    """
-    nruns = len(data)
-
-    fig, ax = plt.subplots()
-    #plt.figure(1)
-    nframes = len(data[0])
-    ncaps = len(data[0,0] )
-    dataWidth = len(data[0,0,0])
-    deltaY = 0
-
-    if options:
-        deltaY = options.get("waterfall")
-
-
-    for n in range(nruns):     
-        for f in range(nframes):
-            d = []    
-            for c in range(ncaps):
-                d.extend( f*deltaY + data[n, f, c, :])
-            
-            x = .5 +.5*(f / (nframes-1))
-            if n%3 == 0:
-                clr = (x,0,0)
-            elif n%3 == 1:    
-                clr = (0,x,0)
-            elif n%3 == 2:
-                clr = (0,0,x)
-
-            ax.plot( range(len(d)), d, color=clr, linewidth=0.5,
-            label=f"Run{n}" if f ==0 else "" )
-
-
-
-    plt.legend()
-    plt.xlabel('1Tap-lineout across ALL caps')
-    plt.ylabel('Ave (ADU)')
-    plt.title( title )
-    ax.yaxis.set_minor_locator( MultipleLocator(1000))
-    #plt.show(block=True) 
-
-#
-#  Used with Cornell_Noise
-#
-def calcBackgroundStats(dobj, data=None, runnum = 0):
-    """
-   
-    title 
-    data is [#run, #frame, #cap]
-    runnum increments from 0 to #run-1
-    NOTE - 
-    """
-   
-    back = None
-    
-    if hasattr(dobj, "back"):
-        back = dobj.back
-
-    fore = dobj.fore
-    roi = dobj.roi
-    ncaps = dobj.NCAPS
-    ave = np.zeros((8,512,512),dtype=np.double)
-    imageCount = 0
-    
-    loopAgain = False
-    raf = None   # Read Additional Files - needed when taking more than 1000 frames.
-    runBase = 1
-
-    try:
-        raf = dobj.readAdditionalFiles
-    except:
-        pass
-
-    loopAgain = True
-
-    # Special case when more than 1000 frames are taken, we need to loop over multiple files. 
-    while loopAgain:
-        for fIdex in range( fore.numImages):
-            (mdF,dataF) = fore.getFrame()
-            if back:
-                (mdB,dataB) = back.getFrame()
-                dataF = dataF - dataB #  Put F-B in F as a kludge.
-
-            frameNum = (runBase-1  + fIdex) // ncaps  # not a typo "//" is integer division 
-            dataArray = np.resize(dataF,[512,512])
-             # 12/27/23 oh oh mdb.capNum appears to be incorrect!
-            cnum = fIdex % 8
-            dobj.foreStack[frameNum,cnum,:,:] = dataArray
-            ave[ cnum,:,:] += dataArray
-            imageCount += 1
-
-        if raf:
-            runBase += raf["nJumpBy"]
-            nextFileName = raf["baseFilenameF"] + f"{runBase:08d}.raw"
-            try:
-                fore = dobj.fore = BKL.KeckFrame( nextFileName )
-                if VERBOSE:
-                    print(f"Open Foreground:{nextFileName}")
-            except Exception as e:
-                loopAgain = False
-
-            if back:
-                nextFileName = raf["baseFilenameB"] + f"{runBase:08d}.raw"
-                try:
-                    back = dobj.back = BKL.KeckFrame( nextFileName )
-                    if VERBOSE:
-                       print(f"Open Background:{nextFileName}")
-
-                except Exception as e:
-                    loopAgain = False
-
-        else:
-            loopAgain = False
-            break  # EXIT WHILE
-
+    # create a residuals plot
+    fig2, ax2 = plt.subplots()
+    for c in range(ncaps):
+        residuals = np.zeros(nruns,dtype=np.double)
+        for n in range(nruns):
+            residuals[n] = averageOverFrames[n] - (bestfit[c,0]*xrange[n] + bestfit[c,1])
+        lbl = f"Cap:{c+1}"   
+        ax2.plot( xrange,  residuals[:], 
+                color=colors[c], label = lbl )  
         
-        
-    # WHILE } 
+    # 
+    ax2.set_xlabel(options["x_axis_label"] if options and "x_axis_label" in options else "X")
+    ax2.set_ylabel("Residual (ADU)")
+    ax2.set_title("Residuals (Data - line fit)  per Cap")
 
-    for ic in range( ncaps ):
-        ave[ ic, :, :] = ave[ ic, :, :] / (imageCount/ncaps)
+    plt.show(block= True) 
 
 
-    #dobj.ave = ave  # Python is awesome - just attach this new thing to the object.
+#Wrap this code into it own function
+#  # Read CSV file
+#  #  # https://pandas.pydata.org/docs/reference/api/pandas.read_csv.html
+def readCSV(filename):
+    import pandas as pd
 
-    # rio is [X,Y,W,H]
-    startPixY = roi[1]
-    endPixY = startPixY + roi[3]
-    startPixX = roi[0]
-    endPixX = startPixX + roi[2]
-    nImages =  imageCount // ncaps  # not a typo "//" is integer division 
+    # Path to your CSV file
+    # This file uses the average of all the diode readings for ic0. Each Spec run starts
+    # at the beginning of a run, so it roughtly matches in time
+    #filename = 
+    # ^ Path might break if not running From the PAD_Analysis folder
+
+
+    # Read the CSV into a DataFrame
+    df = pd.read_csv(filename)
+
+    # Display the contents
+    print(df) # DEBUG
+
+    # Access columns as Series
+    int_time = df["IntTime"]
+    spec_num = df["SPEC#"]
+    avg_diode = df["Average Diode Reading"]
+
+    print("\nIntTime values:", int_time.to_list())
+    print("Average Diode Readings:", avg_diode.to_list())
+
+    first = avg_diode[0]
+    normed_diode = [x / first for x in avg_diode]
+    print("Normalized Diode Readings:", normed_diode)
+    return normed_diode
+
+    
     
 
-    for fn in range( nImages ): 
-        for cn in range (ncaps):
-            V = np.average( dobj.foreStack[fn, cn, startPixY:endPixY, startPixX:endPixX] ) - \
-                np.average( ave[cn, startPixY:endPixY, startPixX:endPixX] )
-            data[runnum, fn,cn] = V
-            #print( fn, cn, roiSum)
-
-
-    if not hasattr(dobj, "secondAnalysis"):
-        # Secondary analysis here?
-        # We want RMS of each pixel.
-        rmsPixels = np.zeros((8,512,512),dtype=np.double) # 8 CAPS, imageH, imageW
-        
-        print("--- this takes a long time ~ 30 seconds ---")
-
-        img2 = np.zeros( (nImages, ncaps, 512, 512), dtype = np.double)
-        for cn in range (ncaps):
-            for fn in range( nImages ): 
-                img2[fn, cn, :, :] = dobj.foreStack[fn, cn, :, :] - ave[cn, :, :]
-            rmsPixels[cn, :, :] = np.std( img2[:, cn, :, :], axis = 0 )
-
-        dobj.secondAnalysis = rmsPixels
-    
-    
-
-    return data
-
-def calcMeanVersusTime(dobj, data=None, runnum=0):
-    """
-    
-    """
-    if hasattr(dobj, "back"):
-        back = dobj.back
-
-    fore = dobj.fore
-    roi = dobj.roi
-    ncaps = dobj.NCAPS
-
-
-    for fIdex in range( fore.numImages):
-        (mdF,dataF) = fore.getFrame()
-        if back:
-            (mdB,dataB) = back.getFrame()
-            dataF = dataF - dataB #  Put F-B in F as a kludge.
-
-        frameNum = fIdex // ncaps  # not a typo "//" is integer division 
-        dataArray = np.resize(dataF,[512,512])
-        # 12/27/23 oh oh mdb.capNum appears to be incorrect!
-        cnum = fIdex % 8
-
-        dobj.foreStack[frameNum,cnum,:,:] = dataArray
-
-    #  [ Frame, Cap, Y , X ] 
-    
-    # ROI is [X,Y,W,H]
-    startPixY = roi[1]
-    endPixY = startPixY + roi[3]
-    startPixX = roi[0]
-    endPixX = startPixX + roi[2]
-    nImages =  fore.numImages // ncaps  # not a typo "//" is integer division 
-    
-
-    for fn in range( nImages ): 
-        for cn in range (ncaps):
-            data[runnum, fn,cn] = np.average( dobj.foreStack[fn, cn, startPixY:endPixY, startPixX:endPixX] )
-            #print( fn, cn, roiSum)
-
-    return data
 
 
 
+
+#
+#
+#
 def calcLinearity(dobj, data=None, runnum = 0):
     """
-    data is [#run, #frame, #cap]
+    data is [#run, #frame, #cap]   
     runnum increments from 0 to #run-1
     NOTE - Data is stored in array data.
     stores the average value over the ROI.
@@ -949,7 +1334,7 @@ def calcLinearity(dobj, data=None, runnum = 0):
         dobj.foreStack[frameNum,cnum,:,:] = dataArray
 
 
-    # optionaly  compute the average of just the first run, and use that as the background
+    # optionally  compute the average of just the first run, and use that as the background
     # for all subsequent runs
     if hasattr(dobj, "computeBackgroundFromFirstRun") and runnum == 0:
         ave = np.zeros((8,512,512),dtype=np.double)
@@ -977,58 +1362,76 @@ def calcLinearity(dobj, data=None, runnum = 0):
     nImages =  fore.numImages // ncaps  # not a typo "//" is integer division 
     
 
-    for fn in range( nImages ): 
-        for cn in range (ncaps):
-            data[runnum, fn,cn] = np.average( dobj.foreStack[fn, cn, startPixY:endPixY, startPixX:endPixX] )
-            #print( fn, cn, roiSum)
+    #if PREVIEW_IMAGE and runnum == 0:
+    if PREVIEW_IMAGE:
+        zproject = np.average( dobj.foreStack, axis=0 ) # average over frames
+        imagePlots( dobj, zproject, f"FmB preview {runnum+1}" )  
+        plt.show(block = True)
+                 
 
-    return data
+    if hasattr(dobj,"rejectInvalidPixels"):
+        I_min = -50     # lower threshold (noise floor)
+        I_max = 20000    # upper threshold (saturation limit)
 
 
-def calcEachCapLineout(dobj,  data=None, runnum = 0):
-    """
-    data is [#run, #frame, #cap] = [list of data]
-    runnum increments from 0 to #run-1
-    NOTE - Data is stored in array data. Each element [r,f,c] is a list of values.
+        # Compute valid mask once across all frames and caps
+        valid_mask = np.ones((endPixY - startPixY, endPixX - startPixX), dtype=bool)
+
+        for fn in range(nImages):
+            for cn in range(ncaps):
+                area = dobj.foreStack[fn, cn, startPixY:endPixY, startPixX:endPixX]
+                valid_mask &= (area >= I_min) & (area <= I_max)
+
+        # Now compute mean per run using that same mask
+        for fn in range(nImages):
+            for cn in range(ncaps):
+                area = dobj.foreStack[fn, cn, startPixY:endPixY, startPixX:endPixX]
+
+                valid_pixels = area[valid_mask]
+                if valid_pixels.size > 0:
+                    ave = valid_pixels.mean()
+                else:
+                    ave = np.nan
+
+                data[runnum, fn, cn] = ave 
+        
+        
+
+    else:
     
-    """
-   
-    back = None
-    fore = dobj.fore
-    if hasattr(dobj, "back"):
-        back = dobj.back
-    roi = dobj.roi
+        # New code -- optionally debounce the data using the mean of another ROI
+        if hasattr(dobj, "debounce") and dobj.debounce == True:
+            debounce = True
+            db_startPixY = 165
+            db_endPixY = db_startPixY + 50
+            db_startPixX = 300
+            db_endPixX= db_startPixX + 50
 
-    ncaps = dobj.NCAPS
+        else:
+            debounce = False
 
-    for fIdex in range( fore.numImages):
-        (mdF,dataF) = fore.getFrame()
-        if back:
-            (mdB,dataB) = back.getFrame()
-            dataF = dataF - dataB #  Put F-B in F as a kludge.
-
-        frameNum = fIdex // ncaps  # not a typo "//" is integer division 
-        # 12/27/23 oh oh mdb.capNum appears to be incorrect!
-        cnum = fIdex % 8
-
-        dataArray = np.resize(dataF,[512,512])
-        dobj.foreStack[frameNum,cnum,:,:] = dataArray
-
-    #  [ Frame, Cap, Y , X ] 
     
-    # rio is [X,Y,W,H]
-    startPixY = roi[1]
-    endPixY = startPixY + roi[3]
-    startPixX = roi[0]
-    endPixX = startPixX + roi[2]
-    nImages =  fore.numImages // ncaps  # not a typo "//" is integer division 
-    
+        for fn in range( nImages ): 
+            for cn in range (ncaps):
 
-    for fn in range( nImages ): 
-        for cn in range (ncaps):
-            # Hopefully - axis=0 averages over columns
-            data[runnum, fn,cn] = np.mean( dobj.foreStack[fn, cn, startPixY:endPixY, startPixX:endPixX], axis=0 )
-            #print(f"debug:{data[runnum, fn, cn]}")
+                ave = np.average( dobj.foreStack[fn, cn, startPixY:endPixY, startPixX:endPixX] )      
+                if debounce:
+                    
+                    bncVal = np.average( dobj.foreStack[fn, cn, \
+                        db_startPixY:db_endPixY, db_startPixX:db_endPixX] )  
+
+                    print (f"ave{ave}, dbn{bncVal}")
+
+                    ave -= bncVal  
+              
+
+                
+                # store ave 
+                data[runnum, fn, cn] = ave
+                
+                
+
+                #print( fn, cn, roiSum)
 
     return data
 
@@ -1047,6 +1450,16 @@ def defineListOfTests():
 
     lot = []
     lot.append( ("Analyze_CeO2", "Linearity vs  integration time.") )
+    lot.append( ("Analyze_RingWalk", "Ringwalk -  edit file to select run.") )
+    lot.append( ("Ruby_integ_scan", "Linearity vs integration time w Ruby spot.") )
+    lot.append( ("Ruby_gain-lin", "Linearity vs keck Gain.") )
+    lot.append( ("Atten_Lin", "Linearity vs Alum/Steel Attenuator.") )
+
+    
+
+
+    
+    
     
     
     return lot
