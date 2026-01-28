@@ -14,7 +14,7 @@ import xpad_utils as xutil
 
 
 # GLOBAL FLAGS
-PRINT_METADATA = 0
+PRINT_METADATA = 1
 #
 
  
@@ -59,7 +59,13 @@ class KeckFrame:
             self.dtype = np.dtype('int32')
             self.footerSize = 2048 - 256
             self.readExtraByte = True
-            
+
+        elif imgType == "KECKPADX2":
+            self.oneImageSize = (2048+1024*512*2)
+            self.footerSize = 2048 - 256
+            self.readExtraByte = False
+            self.dtype = np.dtype('int16')
+
             
         elif imgType == 'CORRECTED':
             self.oneImageSize = (4256+532*612*8) # MM
@@ -142,6 +148,9 @@ class KeckFrame:
             footerB = struct.unpack("<1000I",footer) #  read into list of uint32
             # Use twice the length using 32bit Int, rather than doubles to not break the conversion routines.  
             # ie: (4256-256)/8
+        elif self.imgType == 'KECKPADX2':
+            footer = footer[0:(2048-256)] 
+            footerB = struct.unpack("<896H",footer)
         else:            
             footerB = struct.unpack("<384H",footer) #  read into list of uint16
             # ie (1024-256)/2
@@ -153,16 +162,40 @@ class KeckFrame:
         # SubMod<N> Semsor Temp<N>
         #print( footerB[8],  footerB[8 + 1*12],  footerB[8 + 2*12], 
         #      footerB[8 + 3*12], footerB[8 + 4*12],  footerB[8 + 5*12], footerB[8 + 6*12], 
-        #      footerB[8 + 7*12]  ) 
+        #      footerB[8 + 7*12]  )
 
-        v_iss_buf_pix = [footerB[i * 12] for i in range(8)]
-        v_iss_ab = [footerB[1 + i * 12] for i in range(8)]
-        v_mon_out = [footerB[2 + i * 12] for i in range(8)]
-        v_iss_buf = [footerB[3 + i * 12] for i in range(8)]
-        vdda_current = [footerB[4 + i * 12] for i in range(8)]
-        vdda_voltage = [footerB[5 + i * 12] for i in range(8)]
-        sensor_temp = [footerB[8 + i * 12] for i in range(8)]   # Sensor Temp
+        ## Create the variables now, since they will be edited in an if
+        v_iss_buf_pix = []
+        v_iss_ab = []
+        v_mon_out = []
+        v_iss_buf = []
+        vdda_current = []
+        vdda_voltage = []
+        sensor_temp = []
 
+        numHeads = 1
+        if self.imgType == 'KECKPADX2':
+            numHeads = 2
+            
+        
+        for headIdx in range(numHeads):
+            base_idx = (0x180)//2*headIdx
+            v_iss_buf_pix_temp = [footerB[base_idx + i*24] for i in range(8)]
+            v_iss_ab_temp = [footerB[base_idx + 1 + i*24] for i in range(8)]
+            v_mon_out_temp = [footerB[base_idx + 2 + i*24] for i in range(8)]
+            v_iss_buf_temp = [footerB[base_idx + 3 + i*24] for i in range(8)]
+            vdda_current_temp = [footerB[base_idx + 4 + i*24] for i in range(8)]
+            vdda_voltage_temp = [footerB[base_idx + 5 + i*24] for i in range(8)]
+            sensor_temp_temporary = [footerB[base_idx + 8 + i*24] for i in range(8)]
+            v_iss_buf_pix.extend(v_iss_buf_pix_temp)
+            v_iss_ab.extend(v_iss_ab_temp)
+            v_mon_out.extend(v_mon_out_temp)
+            v_iss_buf.extend(v_iss_buf_temp)
+            vdda_current.extend(vdda_current_temp)
+            vdda_voltage.extend(vdda_voltage_temp)
+            sensor_temp.extend(sensor_temp_temporary)
+
+                               
         # convert raw values to correct units
         cv_iss_buf_pix = [ xutil.convertSensorCurrent( x ) for x in v_iss_buf_pix  ]
         cv_iss_ab      = [ xutil.convertSensorCurrent( x ) for x in v_iss_ab  ]
