@@ -208,4 +208,74 @@ class PADStack:
                         if (zero_peak >= self.fpBound[0]) and (zero_peak <= self.fpBound[1]):
                             curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] = curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] - zero_peak
 
-                        
+    def applyDefect(self, defectImg):
+        if defectImg.spType != self.SP_TYPE_DEFECT:
+            print("Invalid defect map.")
+            return
+
+        num_caps = self.numCaps
+        num_img = self.numImages
+
+        for frame_idx in range(num_img):
+            cap_num = frame_idx % num_caps
+            self.imgStack[frame_idx] = self.imgStack[frame_idx]+defectImg.imgStack[self.capIndex[cap_num]]
+
+        return
+                            
+    def loadDefect(self, xpad_file, imgType):
+        
+        if imgType == 'KECK':
+            self.numImages = 8
+            self.imgSize = (512,512)
+            self.numCaps = 8
+            self.capMask = 0x1ff
+        elif imgType == 'MMPAD':
+            self.numImages = 1
+            self.imgSize = (512,512)
+            self.numCaps = 1
+            self.capMask = 0x1
+        elif imgType == 'KECKPADX2':
+            self.numImages = 8
+            self.imgSize = (512,1024)
+            self.numCaps = 8
+            self.capMask = 0x1ff
+        else:
+            print("Error: invalid type {} creating defect map.".format(imgType))
+            
+            return              # Not a supported type
+
+        self.spType = self.SP_TYPE_DEFECT
+        
+        defect_hot_name  = xpad_file+"hot_pixels.pgm"
+        defect_dark_name = xpad_file+"dark_pixels.pgm"
+
+        defect_names = [defect_hot_name, defect_dark_name]
+
+        # Create the array for the mask
+        self.imgStack = []
+        for capIdx in range(self.numCaps):
+            curr_frame = np.zeros(self.imgSize, dtype=np.double) # Doubles let us NaN, which allows for adding the defect map to an image
+            self.imgStack.append(curr_frame)
+
+        # Now to load in the files
+        for mask_name in defect_names:
+            print("Defect map: {}".format(mask_name))
+            mask_file = open(mask_name, 'r') # Need to read in names via text files
+            first_line = mask_file.readline() # This is the header
+            second_line = mask_file.readline() # This is the mandatory comment line
+            third_line = mask_file.readline()  # This is the size line
+            fourth_line = mask_file.readline() # This is the maxval line, with one newline at the end
+            header_end = mask_file.tell()
+            mask_file.close();              # Done with reading header
+            mask_file = open(mask_name, 'rb') # Now open in binary mode
+            mask_file.seek(header_end, 0)     # Skip the header
+
+            # Now we can read in the raster
+            for capIdx in range(self.numCaps):
+                curr_mask = np.fromfile(mask_file, dtype=np.uint8, count=self.imgSize[0]*self.imgSize[1]).reshape(self.imgSize)
+                for row_idx in range(self.imgSize[0]):
+                    for col_idx in range(self.imgSize[1]):
+                        if curr_mask[row_idx,col_idx] != 0:
+                            self.imgStack[capIdx][row_idx,col_idx] += np.nan # Make it NaN for use later
+                
+            
