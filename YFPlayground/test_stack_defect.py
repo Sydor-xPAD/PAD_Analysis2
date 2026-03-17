@@ -57,6 +57,9 @@ for frameIdx in range(my_stack.numImages):
 
 my_stack.apply_debounce()
 
+my_stack.nan_pad()
+my_stack.nan_filter()
+my_stack.geocorr()
 out_file = open("test_db.raw", 'wb')
 
 for frameIdx in range(my_stack.numImages):

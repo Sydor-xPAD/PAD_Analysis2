@@ -2,6 +2,49 @@ import Big_keck_load as BKL
 import numpy as np
 import scipy
 
+class PADSM:
+    SM_BASE_WIDTH = 256
+    SM_BASE_HEIGHT = 128
+    SM_EXP_WIDTH = 259          # Expanded width
+    SM_EXP_HEIGHT = 128         # Expanded height
+
+def split_sm(img, sm_size):
+    img_size = img.shape;
+    if img_size[0] % sm_size[0] != 0 or \
+       img_size[1] % sm_size[1] != 0:
+        return [];           # Invalid size
+
+    num_sm_row = img_size[0]//sm_size[0]
+    num_sm_col = img_size[1]//sm_size[1]
+
+    sm_list = []
+    sm_idx = -1
+
+    for row_idx in range(num_sm_row):
+        start_row = row_idx*sm_size[0]
+        end_row = start_row+sm_size[0]
+        for col_idx in range(num_sm_col):
+            start_col = col_idx*sm_size[1]
+            end_col = start_col+sm_size[1]
+            sm_idx = sm_idx+1
+            curr_sm = img[start_row:end_row,start_col:end_col]
+            sm_append = curr_sm[:] # Make sure we copy the data
+            sm_list.append(sm_append)
+
+    return sm_list
+            
+def sm_expand(sm_img):
+    
+    out_sm = np.ndarray((128, 259), dtype=np.float64)*0
+    out_sm[:,0:128] = sm_img[:,0:128] # Copy the left half
+    out_sm[:,(128+3):259] = sm_img[:,128:256] # Copy the right half
+    out_sm[:,127] = sm_img[:,127]*0.4
+    out_sm[:,128] = sm_img[:,127]*0.4
+    out_sm[:,129] = sm_img[:,127]*0.2+sm_img[:,128]*0.2
+    out_sm[:,130] = sm_img[:,128]*0.4
+    out_sm[:,131] = sm_img[:,128]*0.4
+    return out_sm
+
 class PADStack:
     SP_TYPE_NONE = 0;
     SP_TYPE_BG = 1;
@@ -278,4 +321,68 @@ class PADStack:
                         if curr_mask[row_idx,col_idx] != 0:
                             self.imgStack[capIdx][row_idx,col_idx] += np.nan # Make it NaN for use later
                 
+
+    def nan_pad(self):
+        num_slices = len(self.imgStack)
+        if num_slices == 0:
+            return              # Nothing to do
+        img_size = self.imgStack[0].shape
+        new_size = (img_size[0]+2, img_size[1]+2)
+        img_type = self.imgStack[0].dtype
+        new_img_stack = []
+        for slice_idx in range(num_slices):
+            curr_slice = np.ndarray(shape=new_size, dtype=img_type)
+            curr_slice = curr_slice+np.nan
+            curr_slice[1:(img_size[0]+1),1:(img_size[1]+1)]=self.imgStack[slice_idx][:]
+            new_img_stack.append(curr_slice)
+
+        self.imgStack = new_img_stack
+        return
+
+    def nan_filter(self, b_restore_size=True):
+        num_slices = len(self.imgStack)
+        if num_slices == 0:
+            return
+        pad_img_size = self.imgStack[0].shape
+        base_img_size = (pad_img_size[0]-2, pad_img_size[1]-2)
+        for slice_idx in range(num_slices):
+            curr_slice = self.imgStack[slice_idx][:] # Need a copy for iterative replacement
+            for y_idx in range(1, base_img_size[1]+1):
+                for x_idx in range(1, base_img_size[0]+1):
+                    if np.isnan(curr_slice[y_idx,x_idx]):
+                        curr_slice[y_idx,x_idx] = np.nanmedian(self.imgStack[slice_idx][(y_idx-1):(y_idx+2),(x_idx-1):(x_idx+2)])
+
+            if b_restore_size:            
+                self.imgStack[slice_idx] = curr_slice[1:(base_img_size[0]+1),1:(base_img_size[1]+1)]
+            else:
+                self.imgStack[slice_idx] = curr_slice
             
+        return
+
+    def geocorr(self, gc_params=None):
+        full_size=(612, 532)    # Size of a full normal camera frame after geocal
+        sm_size = (128, 256)
+        
+        num_slices = len(self.imgStack)
+        if num_slices == 0:
+            return
+        
+        pad_img_size = self.imgStack[0].shape
+        
+        for slice_idx in range(num_slices):
+            out_slice = np.ndarray(full_size, dtype=np.float64)*0
+            curr_slice = self.imgStack[slice_idx] # Need a copy for iterative replacement
+            
+            sm_list = split_sm(curr_slice, sm_size)
+            sm_idx = -1
+            for sm in sm_list:
+                sm_idx = sm_idx + 1
+                out_sm = sm_expand(sm)
+                sm_col = sm_idx % 2
+                sm_row = sm_idx // 2
+                out_col = 261*sm_col
+                out_row = 132*sm_row
+                out_slice[out_row:(out_row+sm_size[0]),out_col:(out_col+sm_size[1]+3)] = out_sm
+            self.imgStack[slice_idx] = out_slice
+            
+        return
