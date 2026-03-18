@@ -2,12 +2,14 @@ import padstack
 import sys
 import copy
 import struct
+import math
 
 fg_file = sys.argv[1]
 bg_file = sys.argv[2]
 ff_file = sys.argv[3]
 defect_file = sys.argv[4]
-sys_type = sys.argv[5]
+gc_file = sys.argv[5]
+sys_type = sys.argv[6]
 
 my_stack = padstack.PADStack(fg_file, sys_type)
 my_bg = padstack.PADStack(bg_file, sys_type)
@@ -59,7 +61,7 @@ my_stack.apply_debounce()
 
 my_stack.nan_pad()
 my_stack.nan_filter()
-my_stack.geocorr()
+my_stack.geocorr(gc_file)
 out_file = open("test_db.raw", 'wb')
 
 for frameIdx in range(my_stack.numImages):

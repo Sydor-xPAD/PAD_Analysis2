@@ -1,6 +1,7 @@
 import Big_keck_load as BKL
 import numpy as np
 import scipy
+import math
 
 class PADSM:
     SM_BASE_WIDTH = 256
@@ -8,8 +9,36 @@ class PADSM:
     SM_EXP_WIDTH = 259          # Expanded width
     SM_EXP_HEIGHT = 128         # Expanded height
 
+def bilinear_interp(img, src_y, src_x):
+    jy = int(math.floor(src_y))
+    jx = int(math.floor(src_x))
+    dy = src_y - jy
+    dx = src_x - jx
+
+    yx = [0,0]
+    yx[0] = (img[jy, jx+1]-img[jy,jx])*dx + img[jy,jx]
+    yx[1] = (img[jy+1, jx+1]-img[jy+1,jx])*dx+img[jy+1,jx]
+    return (yx[1]-yx[0])*dy+yx[0]
+    
+                             
+    
+def parse_gc_params(gc_filename):
+    gc_file = open(gc_filename, 'r')
+    gc_list = []
+    # XXX Assumes lines in order
+    for line in gc_file:
+        split_line = line.split(',')
+        theta = float(split_line[3].strip())/180*math.pi
+        min_x = float(split_line[4].strip())
+        min_y = float(split_line[5].strip())
+        gc_list.append((theta, min_x, min_y))
+
+    gc_file.close()
+    return gc_list
+
 def split_sm(img, sm_size):
     img_size = img.shape;
+    #print(img_size, sm_size)
     if img_size[0] % sm_size[0] != 0 or \
        img_size[1] % sm_size[1] != 0:
         return [];           # Invalid size
@@ -359,30 +388,97 @@ class PADStack:
             
         return
 
-    def geocorr(self, gc_params=None):
+    def rotate_sm(self, sm, gc_params):
+        src_size = sm.shape
+        dest_size = self.calc_rot_size(sm, gc_params[0])
+        src_offset = (src_size[0]/2.0, src_size[1]/2.0)
+        dest_offset = (dest_size[0]/2.0, dest_size[1]/2.0)
+        theta = gc_params[0]
+        x_frac = gc_params[1]-math.floor(gc_params[1])
+        y_frac = gc_params[2]-math.floor(gc_params[2])
+
+        dest_array = np.ndarray(dest_size, dtype=np.float64)
+        for y_idx in range(dest_size[0]):
+            for x_idx in range(dest_size[1]):
+                src_x = math.cos(theta)*(x_idx-dest_offset[1]) + math.sin(theta)*(y_idx-dest_offset[0])+src_offset[1] - x_frac
+                src_y = -math.sin(theta)*(x_idx-dest_offset[1]) + math.cos(theta)*(y_idx-dest_offset[0]) + src_offset[0] - y_frac
+
+                                
+                # Check pixel in bounds
+                if src_x >= 0 and src_x < (src_size[1]-1) and \
+                   src_y >= 0 and src_y < (src_size[0]-1):
+                    dest_array[y_idx,x_idx] = bilinear_interp(sm, src_y, src_x)
+                else:
+                    dest_array[y_idx,x_idx] = np.nan
+
+        return (dest_array, ((dest_size[0]-src_size[0])/2.0, (dest_size[1]-src_size[1])/2.0))
+    
+    def calc_rot_size(self, img, theta):
+        img_size = img.shape
+
+        max_x = 0
+        max_y = 0
+        min_x = 0
+        min_y = 0
+
+        vertex_array = [(0,0), (img_size[0],0), (0, img_size[1]), (img_size[0], img_size[1])]
+
+        for vertex in vertex_array:
+            new_x = vertex[1]*math.cos(theta)-vertex[0]*math.sin(theta)
+            new_y = vertex[1]*math.sin(theta)+vertex[0]*math.cos(theta)
+
+            if (new_x > max_x):
+                max_x = new_x
+            if (new_x < min_x):
+                min_x = new_x
+            if (new_y > max_y):
+                max_y = new_y
+            if (new_y < min_y):
+                min_y = new_y
+
+        dest_height = math.floor(max_y - min_y)
+        dest_width = math.floor(max_x - min_x)
+
+        if (dest_height - img_size[0]) % 2 == 1:
+            dest_height = dest_height+ 1
+        if (dest_width - img_size[1]) % 2 == 1:
+            dest_width = dest_width + 1
+
+        return (dest_height, dest_width)
+    
+    def geocorr(self, gc_params_filename=None):
         full_size=(612, 532)    # Size of a full normal camera frame after geocal
         sm_size = (128, 256)
-        
+
+        gc_params = parse_gc_params(gc_params_filename)
+
+        print(gc_params)
         num_slices = len(self.imgStack)
         if num_slices == 0:
             return
-        
+
+        print("Geocorr: {} slices".format(num_slices))
         pad_img_size = self.imgStack[0].shape
         
         for slice_idx in range(num_slices):
-            out_slice = np.ndarray(full_size, dtype=np.float64)*0
+            out_slice = np.ndarray(full_size, dtype=np.float64)*np.nan
             curr_slice = self.imgStack[slice_idx] # Need a copy for iterative replacement
             
             sm_list = split_sm(curr_slice, sm_size)
             sm_idx = -1
             for sm in sm_list:
                 sm_idx = sm_idx + 1
+                curr_params = gc_params[sm_idx]
                 out_sm = sm_expand(sm)
-                sm_col = sm_idx % 2
-                sm_row = sm_idx // 2
-                out_col = 261*sm_col
-                out_row = 132*sm_row
-                out_slice[out_row:(out_row+sm_size[0]),out_col:(out_col+sm_size[1]+3)] = out_sm
+                
+
+                rotated_sm, offset = self.rotate_sm(out_sm, curr_params)
+                print(rotated_sm.shape)
+                top_left_x = int(math.floor(curr_params[1]-offset[1]))
+                top_left_y = int(math.floor(curr_params[2]-offset[0]))
+
+                print((top_left_x,  top_left_y))
+                out_slice[top_left_y:(top_left_y+rotated_sm.shape[0]),top_left_x:(top_left_x+rotated_sm.shape[1])] = rotated_sm
             self.imgStack[slice_idx] = out_slice
             
         return
