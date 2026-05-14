@@ -9,6 +9,18 @@ class PADSM:
     SM_EXP_WIDTH = 259          # Expanded width
     SM_EXP_HEIGHT = 128         # Expanded height
 
+def quadratic(x, a, b, c):
+    return x*x*a+x*b+c
+
+def vertex_pos(a, b, c):
+    if a >= 0:
+        return 0                # Vertex does not face correct direction
+
+    center = -b/(2*a);          # The roots are spaced evenly around -b/(2a), so don't need discriminant
+    return center
+
+    
+    
 def bilinear_interp(img, src_y, src_x):
     jy = int(math.floor(src_y))
     jx = int(math.floor(src_x))
@@ -164,12 +176,17 @@ class PADStack:
     def bgSub(self, bgImg):
         # Check the cap masks to see if they match
         if (self.capMask != bgImg.capMask) or (bgImg.spType != self.SP_TYPE_BG):
+            print("Cap masks do not match.")
             return False
 
         # For now, assume the sizes match
         numFrames = self.numImages
 
         for frameIdx in range(numFrames):
+            #print("bgsub frameIdx: {}".format(frameIdx))
+            #print(self.imgSize)
+            #print(self.imgStack[frameIdx].shape)
+            #print(bgImg.imgStack[frameIdx % self.numCaps].shape)
             self.imgStack[frameIdx] = self.imgStack[frameIdx].reshape((self.imgSize[0],self.imgSize[1])) - bgImg.imgStack[frameIdx % self.numCaps]
 
         return True
@@ -245,6 +262,7 @@ class PADStack:
         kf.close()
         
     def apply_debounce(self):
+        self.debounce_log = []; # Clear the debounce log
         ASIC_WIDTH = 128
         ASIC_HEIGHT = 128
         ASIC_MARGIN = 4
@@ -252,6 +270,10 @@ class PADStack:
         asic_x_count = self.imgSize[1]//ASIC_WIDTH
         asic_y_count = self.imgSize[0]//ASIC_WIDTH
         numImages = self.numImages
+        debounce_amount = 0
+        debounce_reason = ""
+        debounce_msg = ""
+        
         
         for frame_idx in range(numImages):
             curr_frame = self.imgStack[frame_idx]
@@ -266,6 +288,7 @@ class PADStack:
                     y_min = y_idx*ASIC_HEIGHT + ASIC_MARGIN
                     y_max = y_min+ASIC_HEIGHT - ASIC_MARGIN - ASIC_MARGIN
                     curr_asic = curr_frame[y_min:y_max,x_min:x_max]
+                    asic_idx = y_idx*asic_x_count+x_idx;
                     
                     # First, compute a histogram of the pixels
                     curr_hist,bin_edge = np.histogram(curr_asic, bins=self.numBins, range=(self.histBinStart, self.histBinEnd))
@@ -274,11 +297,58 @@ class PADStack:
                     peak_ret = scipy.signal.find_peaks(curr_hist, height=self.fpHeight, width=self.fpWidth);
                     curr_peaks = peak_ret[0]
 
+                    if (frame_idx == 3) and (y_idx==1):
+                        hist_filename = "histogram_x{}.txt".format(x_idx)
+                        hist_file = open(hist_filename, "w")
+
+                        for hist_pop in curr_hist:
+                            hist_file.write(str(hist_pop))
+                            hist_file.write(",")
+                        hist_file.write("\n")
+
+                        for hist_edge in bin_edge:
+                            hist_file.write(str(hist_edge))
+                            hist_file.write(",")
+                        hist_file.write("\n")
+                        hist_file.close()
+                        
+
                     #print(len(curr_peaks))
+                    ENABLE_QUADRATIC = 1;
                     if (len(curr_peaks)>=1):
                         zero_peak = 0.5*(bin_edge[curr_peaks[0]]+bin_edge[curr_peaks[0]+1])
+                        debounce_msg = ""
                         if (zero_peak >= self.fpBound[0]) and (zero_peak <= self.fpBound[1]):
                             curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] = curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] - zero_peak
+                            debounce_amount = zero_peak
+                            debounce_reason = "Applied Topo"
+                        else:
+                            debounce_amount = zero_peak
+                            debounce_reason = "Topo out of range"
+                    elif (len(curr_peaks)==1):
+                        peak_width, width_heights, left_ips, right_ips = scipy.signal.peak_widths(curr_hist, curr_peaks);
+                        #print(peak_width)
+                        left_idx = math.floor(left_ips[0])
+                        right_idx = math.ceil(right_ips[0])
+                        
+                        x_centers = 0.5 *(bin_edge[left_idx:right_idx]+bin_edge[(left_idx+1):(right_idx+1)]);
+                        ##print(x_centers)
+                        quad_fit_ret = scipy.optimize.curve_fit(quadratic, x_centers, curr_hist[left_idx:right_idx], [-1,20,400])
+                        quad_coeff = quad_fit_ret[0]
+                        debounce_msg = quad_coeff
+                        #print(quad_fit_ret)
+                        zero_peak = vertex_pos(*quad_coeff);
+                        debounce_amount = zero_peak
+                        if (zero_peak >= self.fpBound[0]) and (zero_peak <= self.fpBound[1]):
+                            curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] = curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] - zero_peak
+                            debounce_reason = "Adaptive quadratic"
+                        else:
+                            debounce_reason = "Adaptive quadratic out of range"
+                    else:
+                        debounce_amount = 0
+                        debounce_reason = "No peaks found"
+                        deboucne_msg = ""
+                    self.debounce_log.append([frame_idx, asic_idx, debounce_amount, debounce_reason, debounce_msg])        
 
     def applyDefect(self, defectImg):
         if defectImg.spType != self.SP_TYPE_DEFECT:
@@ -465,20 +535,20 @@ class PADStack:
             curr_slice = self.imgStack[slice_idx] # Need a copy for iterative replacement
             
             sm_list = split_sm(curr_slice, sm_size)
+            
             sm_idx = -1
             for sm in sm_list:
                 sm_idx = sm_idx + 1
                 curr_params = gc_params[sm_idx]
                 out_sm = sm_expand(sm)
-                
 
                 rotated_sm, offset = self.rotate_sm(out_sm, curr_params)
                 print(rotated_sm.shape)
                 top_left_x = int(math.floor(curr_params[1]-offset[1]))
                 top_left_y = int(math.floor(curr_params[2]-offset[0]))
-
-                print((top_left_x,  top_left_y))
                 out_slice[top_left_y:(top_left_y+rotated_sm.shape[0]),top_left_x:(top_left_x+rotated_sm.shape[1])] = rotated_sm
             self.imgStack[slice_idx] = out_slice
+                
+                
             
         return
