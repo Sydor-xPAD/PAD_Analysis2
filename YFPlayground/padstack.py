@@ -2,6 +2,9 @@ import Big_keck_load as BKL
 import numpy as np
 import scipy
 import math
+import multiprocessing
+import threading
+import time
 
 class PADSM:
     SM_BASE_WIDTH = 256
@@ -28,8 +31,12 @@ def bilinear_interp(img, src_y, src_x):
     dx = src_x - jx
 
     yx = [0,0]
-    yx[0] = (img[jy, jx+1]-img[jy,jx])*dx + img[jy,jx]
-    yx[1] = (img[jy+1, jx+1]-img[jy+1,jx])*dx+img[jy+1,jx]
+    base_yx0 = img[jy, jx]
+    base_yx1 = img[jy+1, jx]
+    #yx[0] = (img[jy, jx+1]-img[jy,jx])*dx + img[jy,jx]
+    #yx[1] = (img[jy+1, jx+1]-img[jy+1,jx])*dx+img[jy+1,jx]
+    yx[0] = (img[jy, jx+1]-base_yx0)*dx + base_yx0
+    yx[1] = (img[jy+1, jx+1]-base_yx1)*dx+base_yx1
     return (yx[1]-yx[0])*dy+yx[0]
     
                              
@@ -315,7 +322,7 @@ class PADStack:
 
                     #print(len(curr_peaks))
                     ENABLE_QUADRATIC = 1;
-                    if (len(curr_peaks)>=1):
+                    if (len(curr_peaks)>=2):
                         zero_peak = 0.5*(bin_edge[curr_peaks[0]]+bin_edge[curr_peaks[0]+1])
                         debounce_msg = ""
                         if (zero_peak >= self.fpBound[0]) and (zero_peak <= self.fpBound[1]):
@@ -458,6 +465,64 @@ class PADStack:
             
         return
 
+    def compute_loc_matrix(self, in_sm, gc_params):
+        sm = sm_expand(in_sm)   # Compute on ultimate submodule
+        
+        src_size = sm.shape
+        dest_size = self.calc_rot_size(sm, gc_params[0])
+        src_offset = (src_size[0]/2.0, src_size[1]/2.0)
+        dest_offset = (dest_size[0]/2.0, dest_size[1]/2.0)
+        theta = gc_params[0]
+        x_frac = gc_params[1]-math.floor(gc_params[1])
+        y_frac = gc_params[2]-math.floor(gc_params[2])
+
+        x_array = np.ndarray(dest_size, dtype=np.float64) # Matrix holding source x location
+        y_array = np.ndarray(dest_size, dtype=np.float64) # Matrix holding source y location
+        for y_idx in range(dest_size[0]):
+            for x_idx in range(dest_size[1]):
+                src_x = math.cos(theta)*(x_idx-dest_offset[1]) + math.sin(theta)*(y_idx-dest_offset[0])+src_offset[1] - x_frac
+                src_y = -math.sin(theta)*(x_idx-dest_offset[1]) + math.cos(theta)*(y_idx-dest_offset[0]) + src_offset[0] - y_frac
+                x_array[y_idx,x_idx] = src_x
+                y_array[y_idx,x_idx] = src_y
+
+
+        return (y_array, x_array)
+
+    def rotate_sm_ctrl(self, rotate_args):
+        return self.rotate_sm_preloc(*rotate_args)
+    
+    def rotate_sm_preloc(self, sm, gc_params, loc_matrix):
+        y_loc = loc_matrix[0]
+        x_loc = loc_matrix[1]   # Extract the locations 
+        src_size = sm.shape
+        dest_size = y_loc.shape # We have already calculated the output size
+        src_offset = (src_size[0]/2.0, src_size[1]/2.0)
+        dest_offset = (dest_size[0]/2.0, dest_size[1]/2.0)
+        theta = gc_params[0]
+        x_frac = gc_params[1]-math.floor(gc_params[1])
+        y_frac = gc_params[2]-math.floor(gc_params[2])
+        
+        dest_array = np.ndarray(dest_size, dtype=np.float64)
+        total_interp_time = 0
+        for y_idx in range(dest_size[0]):
+            for x_idx in range(dest_size[1]):
+                src_x = x_loc[y_idx,x_idx]
+                src_y = y_loc[y_idx,x_idx] # Retrieve the pre-computed indices
+
+                # Check in bounds
+                if src_x >= 0 and src_x < (src_size[1]-1) and \
+                   src_y >= 0 and src_y < (src_size[0]-1):
+                    interp_start_time = time.time()
+                    dest_array[y_idx,x_idx] = bilinear_interp(sm, src_y, src_x)
+                    interp_stop_time =time.time()
+                    total_interp_time += (interp_stop_time - interp_start_time)
+                else:
+                    dest_array[y_idx,x_idx] = np.nan
+
+        print("Interpolation proper: {}".format(total_interp_time))
+        return (dest_array, ((dest_size[0]-src_size[0])/2.0, (dest_size[1]-src_size[1])/2.0))
+                    
+    
     def rotate_sm(self, sm, gc_params):
         src_size = sm.shape
         dest_size = self.calc_rot_size(sm, gc_params[0])
@@ -482,6 +547,21 @@ class PADStack:
                     dest_array[y_idx,x_idx] = np.nan
 
         return (dest_array, ((dest_size[0]-src_size[0])/2.0, (dest_size[1]-src_size[1])/2.0))
+
+    def rotate_thread_ctrl(self, base_sm, gc_params, pixel_loc, out_sm_list, out_offset_list, sm_idx):
+        #print("Submodule index: {}".format(sm_idx))
+        start_time = time.time()
+        out_sm = sm_expand(base_sm)
+        expand_time = time.time()
+        dest_array, dest_offset = self.rotate_sm_preloc(out_sm+0, gc_params, pixel_loc)
+        end_time = time.time()
+        print("Thread {} expansion {}, rotation {}".format(sm_idx, expand_time-start_time, end_time-expand_time))
+        out_sm_list[sm_idx] = dest_array
+        #print("Thread control: {}".format(dest_offset))
+        out_offset_list[sm_idx] = dest_offset
+        end_time = time.time()
+        print("Thread {} took {}.".format(sm_idx,end_time-start_time))
+        return
     
     def calc_rot_size(self, img, theta):
         img_size = img.shape
@@ -529,25 +609,188 @@ class PADStack:
 
         print("Geocorr: {} slices".format(num_slices))
         pad_img_size = self.imgStack[0].shape
+
+        out_stack = []
+
+        ## Compute the parameters for the geocorr
+        matrix_loc_list = []
+        sm_idx = -1
+        sm_list = split_sm(self.imgStack[0], sm_size)
+        for sm in sm_list:
+            sm_idx = sm_idx+1
+            matrix_loc = self.compute_loc_matrix(sm, gc_params[sm_idx])
+            matrix_loc_list.append(matrix_loc)
+            
         
         for slice_idx in range(num_slices):
-            out_slice = np.ndarray(full_size, dtype=np.float64)*np.nan
+            out_slice = np.ndarray(full_size, dtype=np.float64)+np.nan # We always have to allocate a new slice; maybe the plus NaN will be faster than times NaN
+            
             curr_slice = self.imgStack[slice_idx] # Need a copy for iterative replacement
             
-            sm_list = split_sm(curr_slice, sm_size)
-            
+            sm_list = split_sm(self.imgStack[slice_idx], sm_size)
+
+                
             sm_idx = -1
             for sm in sm_list:
                 sm_idx = sm_idx + 1
                 curr_params = gc_params[sm_idx]
                 out_sm = sm_expand(sm)
 
-                rotated_sm, offset = self.rotate_sm(out_sm, curr_params)
-                print(rotated_sm.shape)
+                ##rotated_sm, offset = self.rotate_sm(out_sm, curr_params)
+                rotated_sm, offset = self.rotate_sm_preloc(out_sm, curr_params, matrix_loc_list[sm_idx])
+                #print(rotated_sm.shape)
                 top_left_x = int(math.floor(curr_params[1]-offset[1]))
                 top_left_y = int(math.floor(curr_params[2]-offset[0]))
                 out_slice[top_left_y:(top_left_y+rotated_sm.shape[0]),top_left_x:(top_left_x+rotated_sm.shape[1])] = rotated_sm
+            #out_stack.append(out_slice) # Try making a new list
             self.imgStack[slice_idx] = out_slice
+        #self.imgStack= out_stack;
+                
+                
+            
+        return
+
+    def geocorr_truethread(self, gc_params_filename=None):
+        full_size=(612, 532)    # Size of a full normal camera frame after geocal
+        sm_size = (128, 256)
+
+        gc_params = parse_gc_params(gc_params_filename)
+
+        print(gc_params)
+        num_slices = len(self.imgStack)
+        if num_slices == 0:
+            return
+
+        print("Geocorr: {} slices".format(num_slices))
+        pad_img_size = self.imgStack[0].shape
+
+        out_stack = []
+
+        ## Compute the parameters for the geocorr
+        matrix_loc_list = []
+        sm_idx = -1
+        sm_list = split_sm(self.imgStack[0], sm_size)
+        for sm in sm_list:
+            sm_idx = sm_idx+1
+            matrix_loc = self.compute_loc_matrix(sm, gc_params[sm_idx])
+            matrix_loc_list.append(matrix_loc)
+            
+        
+        for slice_idx in range(num_slices):
+            start_time = time.time()
+            print("Slice start: ".format(start_time))
+            out_slice = np.ndarray(full_size, dtype=np.float64) # We always have to allocate a new slice
+            out_slice.fill(np.nan) # initialize to NaN
+            
+            curr_slice = self.imgStack[slice_idx] # Need a copy for iterative replacement
+            
+            sm_list = split_sm(self.imgStack[slice_idx], sm_size)
+
+            out_sm_list = [None] * len(sm_list)
+            out_offset_list = [None] * len(sm_list) # Shallow copies for list of right lenbth
+            curr_time = time.time()
+            print("Initialize slice: {}".format(curr_time - start_time))
+            rotate_params_list = []
+            sm_idx = -1
+            top_left_list = []
+            thread_list = []
+            for sm in sm_list:
+                sm_idx = sm_idx + 1
+                curr_params = gc_params[sm_idx]
+                curr_loc = matrix_loc_list[sm_idx]
+
+                t = threading.Thread(target=self.rotate_thread_ctrl, args=(sm, curr_params, curr_loc, out_sm_list, out_offset_list, sm_idx))
+                thread_list.append(t)
+
+                top_left_list.append((curr_params[2],curr_params[1]))
+
+            curr_time = time.time()
+            print("Threads created: {}".format(curr_time - start_time))
+            for t in thread_list:
+                t.start()
+
+            curr_time = time.time()
+            print("Threads started: {}".format(curr_time - start_time))
+                
+            for t in thread_list:
+                t.join()
+
+            curr_time = time.time()
+            print("Threads joined: {}".format(curr_time - start_time))
+            
+            num_sm = len(sm_list)
+            for sm_idx in range(num_sm):
+                curr_out_sm = out_sm_list[sm_idx]
+                curr_offset = out_offset_list[sm_idx]
+                #print("Top left list:")
+                #print(top_left_list[sm_idx])
+                #print("Offset:")
+                #print(curr_offset)
+                #print("Len offset list:{}".format(len(out_offset_list)))
+                #print("Shape(offset_item):{}".format(out_offset_list[0].shape))
+                top_left_x = int(math.floor(top_left_list[sm_idx][1]-curr_offset[1]))
+                top_left_y = int(math.floor(top_left_list[sm_idx][0]-curr_offset[0]))
+                out_slice[top_left_y:(top_left_y+curr_out_sm.shape[0]),top_left_x:(top_left_x+curr_out_sm.shape[1])] = curr_out_sm
+            self.imgStack[slice_idx] = out_slice
+            curr_time = time.time()
+            print("Slice assembled and copied: {}".format(curr_time - start_time))
+
+    def geocorr_thread(self, gc_params_filename=None):
+        full_size=(612, 532)    # Size of a full normal camera frame after geocal
+        sm_size = (128, 256)
+
+        gc_params = parse_gc_params(gc_params_filename)
+
+        print(gc_params)
+        num_slices = len(self.imgStack)
+        if num_slices == 0:
+            return
+
+        print("Geocorr: {} slices".format(num_slices))
+        pad_img_size = self.imgStack[0].shape
+
+        out_stack = []
+
+        ## Compute the parameters for the geocorr
+        matrix_loc_list = []
+        sm_idx = -1
+        sm_list = split_sm(self.imgStack[0], sm_size)
+        for sm in sm_list:
+            sm_idx = sm_idx+1
+            matrix_loc = self.compute_loc_matrix(sm, gc_params[sm_idx])
+            matrix_loc_list.append(matrix_loc)
+            
+        
+        for slice_idx in range(num_slices):
+            out_slice = np.ndarray(full_size, dtype=np.float64)+np.nan # We always have to allocate a new slice; maybe the plus NaN will be faster than times NaN
+            
+            curr_slice = self.imgStack[slice_idx] # Need a copy for iterative replacement
+            
+            sm_list = split_sm(self.imgStack[slice_idx], sm_size)
+
+            rotate_params_list = []
+            sm_idx = -1
+            for sm in sm_list:
+                sm_idx = sm_idx + 1
+                rotate_params_list.append((sm, gc_params[sm_idx], matrix_loc_list[sm_idx]))
+
+            with multiprocessing.Pool(8) as p:
+                out_results = p.map(self.rotate_sm_ctrl, rotate_params_list)
+                
+            sm_idx = -1
+            for sm in out_results:
+                sm_idx = sm_idx + 1
+                curr_params = gc_params[sm_idx]
+
+                rotated_sm = out_results[sm_idx][0]
+                offset = out_results[sm_idx][1]
+                
+                top_left_x = int(math.floor(curr_params[1]-offset[1]))
+                top_left_y = int(math.floor(curr_params[2]-offset[0]))
+                out_slice[top_left_y:(top_left_y+rotated_sm.shape[0]),top_left_x:(top_left_x+rotated_sm.shape[1])] = rotated_sm
+            #out_stack.append(out_slice) # Try making a new list
+            self.imgStack[slice_idx] = out_slice
+        #self.imgStack= out_stack;
                 
                 
             
