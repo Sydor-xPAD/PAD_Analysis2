@@ -548,6 +548,27 @@ class PADStack:
 
         return (dest_array, ((dest_size[0]-src_size[0])/2.0, (dest_size[1]-src_size[1])/2.0))
 
+    def rotate_thread_ninterp(self, base_sm, gc_params, curr_loc, pixel_loc, base_points, out_sm_list, out_offset_list, sm_idx):
+        out_sm = sm_expand(base_sm)
+        line_sm = out_sm.reshape((-1,1))
+        
+        dest_size = curr_loc[0].shape
+        src_size = out_sm.shape
+
+        y = np.arange(128)
+        x = np.arange(259)
+        start_time = time.time()
+        #interp = scipy.interpolate.LinearNDInterpolator(base_points, line_sm)
+        #z = interp(pixel_loc)
+        z = scipy.interpolate.interpn((y,x), out_sm, pixel_loc, bounds_error=False)
+        end_time = time.time()
+        print("Interpolation proper took: {}".format(end_time-start_time))
+        ordered = z.reshape(dest_size, order='C')
+        dest_offset = ((dest_size[0]-src_size[0])/2.0, (dest_size[1]-src_size[1])/2.0)
+        out_sm_list[sm_idx] = ordered
+        out_offset_list[sm_idx] = dest_offset
+        
+    
     def rotate_thread_ctrl(self, base_sm, gc_params, pixel_loc, out_sm_list, out_offset_list, sm_idx):
         #print("Submodule index: {}".format(sm_idx))
         start_time = time.time()
@@ -668,13 +689,29 @@ class PADStack:
 
         ## Compute the parameters for the geocorr
         matrix_loc_list = []
+        full_loc_list = []
         sm_idx = -1
         sm_list = split_sm(self.imgStack[0], sm_size)
         for sm in sm_list:
             sm_idx = sm_idx+1
             matrix_loc = self.compute_loc_matrix(sm, gc_params[sm_idx])
+            y_locs = matrix_loc[0].reshape((-1,1))
+            x_locs = matrix_loc[1].reshape((-1,1))
+            num_locs = y_locs.shape[0]
+            full_loc = np.ndarray((num_locs, 2), dtype=np.float64)
+            for loc_idx in range(num_locs):
+                full_loc[loc_idx, 0] = y_locs[loc_idx,0]
+                full_loc[loc_idx, 1] = x_locs[loc_idx,0]
             matrix_loc_list.append(matrix_loc)
-            
+            full_loc_list.append(full_loc)
+        x_src_pos = np.arange(259)
+        y_src_pos = np.arange(128)
+        base_x, base_y = np.meshgrid(x_src_pos, y_src_pos)
+        base_x = base_x.reshape(-1)
+        base_y = base_y.reshape(-1)
+        base_points = np.ndarray((base_x.shape[0],2))
+        base_points[:,0] = base_x
+        base_points[:,1] = base_y
         
         for slice_idx in range(num_slices):
             start_time = time.time()
@@ -698,8 +735,10 @@ class PADStack:
                 sm_idx = sm_idx + 1
                 curr_params = gc_params[sm_idx]
                 curr_loc = matrix_loc_list[sm_idx]
+                curr_full_loc = full_loc_list[sm_idx]
 
-                t = threading.Thread(target=self.rotate_thread_ctrl, args=(sm, curr_params, curr_loc, out_sm_list, out_offset_list, sm_idx))
+                #t = threading.Thread(target=self.rotate_thread_ctrl, args=(sm, curr_params, curr_loc, out_sm_list, out_offset_list, sm_idx))
+                t = threading.Thread(target=self.rotate_thread_ninterp, args=(sm, curr_params, curr_loc, curr_full_loc, base_points, out_sm_list, out_offset_list, sm_idx))
                 thread_list.append(t)
 
                 top_left_list.append((curr_params[2],curr_params[1]))
