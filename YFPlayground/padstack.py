@@ -344,6 +344,9 @@ class PADStack:
                 self.calcMaskDetails();
 
         self.imgSize = (self.metaStack[0].lengthParms[2], self.metaStack[0].lengthParms[1])
+        for frame_idx in range(len(self.imgStack)):
+            self.imgStack[frame_idx] = self.imgStack[frame_idx].reshape((self.imgSize[0],self.imgSize[1]))
+            
         self.dtype = kf.dtype
         kf.close()
         self.op_log = []        # Start with a blank log of recorded operations
