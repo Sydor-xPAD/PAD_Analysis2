@@ -5,6 +5,7 @@ import math
 import multiprocessing
 import threading
 import time
+import h5py
 
 class PADSM:
     SM_BASE_WIDTH = 256
@@ -132,10 +133,13 @@ class PADStack:
 
         if (file_type == 'IMG'):
             self.loadImg(xpad_file, xpad_type)
+            self.debounce_log = []
         elif (file_type == 'FF'):
             self.loadFF(xpad_file, xpad_type)
         elif (file_type == 'DEFECT'):
             self.loadDefect(xpad_file, xpad_type)
+        elif (file_type == 'HDF'):
+            self.loadHDF(xpad_file)
         
         
     def calcMaskDetails(self):
@@ -150,6 +154,27 @@ class PADStack:
             currIdx += 1
 
         return
+
+    def loadHDF(self, filename):
+        with h5py.File(filename, 'r') as f:
+            # Load the image raster
+            if 'image' in f['/']:
+                dset = f['/image']
+                img_shape = dset.shape
+                if len(img_shape) != 3:
+                    raise ValueError("Image of wrong shape")
+                num_img = img_shape[0]
+                for img_idx in range(num_img):
+                    curr_img = dset[img_idx,:,:]
+                    self.imgStack.append(curr_img)
+
+                self.imgSize = self.imgStack[0].shape
+                self.numImages = num_img
+            if 'operation_log' in f['/']:
+                self.op_log = []
+                dset = f['/operation_log']
+                for op in dset:
+                    self.op_log.append(op)
 
     def computeBgStack(self, frame_skip = 2):
         self.spType = self.SP_TYPE_BG
@@ -196,6 +221,8 @@ class PADStack:
             #print(bgImg.imgStack[frameIdx % self.numCaps].shape)
             self.imgStack[frameIdx] = self.imgStack[frameIdx].reshape((self.imgSize[0],self.imgSize[1])) - bgImg.imgStack[frameIdx % self.numCaps]
 
+        self.op_log.append("Applied background subtraction")
+            
         return True
 
     def loadFF(self, xpad_file, imgType):
@@ -233,10 +260,62 @@ class PADStack:
         num_caps = self.numCaps
         num_img = self.numImages
 
+        self.op_log.append("Applied flatfield")
+        
         for frame_idx in range(num_img):
             cap_num = frame_idx % num_caps
             self.imgStack[frame_idx] = self.imgStack[frame_idx]*ffImg.imgStack[self.capIndex[cap_num]]
 
+        return
+
+    def saveImg(self, out_filename):
+        with h5py.File(out_filename, 'w') as f:
+            num_img = len(self.imgStack)
+            if num_img > 0:
+                img_size = self.imgStack[0].shape
+                dset = f.create_dataset("image", (num_img, img_size[0], img_size[1]), dtype=np.double)
+                for img_idx in range(num_img):
+                    dset[img_idx,:,:] = self.imgStack[img_idx]
+                if len(self.debounce_log) > 0:
+                    num_asic = 16 #-=-= XXX This must be changed for KegaPAD
+                    db_amt_dset = f.create_dataset("debounce_amount", (num_img, num_asic), dtype=np.double)
+                    db_msg_dset = f.create_dataset("debounce_msg", (num_img, num_asic), dtype=h5py.string_dtype())
+                    for db in self.debounce_log:
+                        img_idx = db[0]
+                        asic_idx = db[1]
+                        db_amt = db[2]
+                        db_msg = db[3]
+                        db_amt_dset[img_idx,asic_idx] = db_amt
+                        db_msg_dset[img_idx,asic_idx] = db_msg
+
+                if len(self.op_log) > 0:
+                    op_dset = f.create_dataset("operation_log", (len(self.op_log),), dtype=h5py.string_dtype())
+                    for op_idx in range(len(self.op_log)):
+                        op_dset[op_idx] = self.op_log[op_idx]
+
+                f['/image'].attrs['cap_mask'] = self.capMask
+                integ_dset = f.create_dataset("integration_time", (num_img,), dtype=np.float64)
+                inter_dset = f.create_dataset("interframe_time", (num_img,), dtype=np.float64)
+                capnum_dset = f.create_dataset("cap_num", (num_img,), dtype='i')
+                v_iss_buf_pix_dset = f.create_dataset("v_iss_buf_pix", (num_img, len(self.metaStack[0].v_iss_buf_pix)), dtype=np.float64)
+                v_iss_ab_dset = f.create_dataset("v_iss_ab", (num_img, len(self.metaStack[0].v_iss_ab)), dtype=np.float64)
+                v_mon_out_dset = f.create_dataset("v_mon_out", (num_img, len(self.metaStack[0].v_mon_out)), dtype=np.float64)
+                v_iss_buf_dset = f.create_dataset("v_iss_buf", (num_img, len(self.metaStack[0].v_iss_buf)), dtype=np.float64)
+                vdda_current_dset = f.create_dataset("vdda_current", (num_img, len(self.metaStack[0].vdda_current)), dtype=np.float64)
+                vdda_volts_dset = f.create_dataset("vdda_volts", (num_img, len(self.metaStack[0].vdda_volts)), dtype=np.float64)
+                sensor_temp_dset = f.create_dataset("sensor_temp", (num_img, len(self.metaStack[0].sensorTemp)), dtype=np.float64)
+                for img_idx in range(num_img):
+                    integ_dset[img_idx] = self.metaStack[img_idx].integTime
+                    inter_dset[img_idx] = self.metaStack[img_idx].interTime
+                    capnum_dset[img_idx] = self.metaStack[img_idx].capNum
+                    v_iss_buf_pix_dset[img_idx] = self.metaStack[img_idx].v_iss_buf_pix
+                    v_iss_ab_dset[img_idx] = self.metaStack[img_idx].v_iss_ab
+                    v_mon_out_dset[img_idx] = self.metaStack[img_idx].v_mon_out
+                    v_iss_buf_dset[img_idx] = self.metaStack[img_idx].v_iss_buf
+                    vdda_current_dset[img_idx] = self.metaStack[img_idx].vdda_current
+                    vdda_volts_dset[img_idx] = self.metaStack[img_idx].vdda_volts
+                    sensor_temp_dset[img_idx] = self.metaStack[img_idx].sensorTemp
+                    
         return
         
                 
@@ -267,6 +346,7 @@ class PADStack:
         self.imgSize = (self.metaStack[0].lengthParms[2], self.metaStack[0].lengthParms[1])
         self.dtype = kf.dtype
         kf.close()
+        self.op_log = []        # Start with a blank log of recorded operations
         
     def apply_debounce(self):
         self.debounce_log = []; # Clear the debounce log
@@ -280,7 +360,8 @@ class PADStack:
         debounce_amount = 0
         debounce_reason = ""
         debounce_msg = ""
-        
+
+        self.op_log.append("Applied debounce")
         
         for frame_idx in range(numImages):
             curr_frame = self.imgStack[frame_idx]
@@ -365,6 +446,8 @@ class PADStack:
         num_caps = self.numCaps
         num_img = self.numImages
 
+        self.op_log.append("Applied defect map.")
+        
         for frame_idx in range(num_img):
             cap_num = frame_idx % num_caps
             self.imgStack[frame_idx] = self.imgStack[frame_idx]+defectImg.imgStack[self.capIndex[cap_num]]
