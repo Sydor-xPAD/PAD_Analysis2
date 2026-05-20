@@ -16,7 +16,7 @@ Octave may be used to load the image data from an HDF5 file.  The command is `lo
 Resources
 =========
 
-Fiji: [https://fiji.sc](https://fiji.sc)
-ImageJ: [https://imagej.net/software/imagej/](https://imagej.net/software/imagej/)
-Octave: [https://octave.org](https://octave.org)
-Python: [https://www.python.org](https://python.org)
+* Fiji: [https://fiji.sc](https://fiji.sc)
+* ImageJ: [https://imagej.net/software/imagej/](https://imagej.net/software/imagej/)
+* Octave: [https://octave.org](https://octave.org)
+* Python: [https://www.python.org](https://python.org)
