@@ -640,12 +640,7 @@ class PADStack:
 
         y = np.arange(128)
         x = np.arange(259)
-        start_time = time.time()
-        #interp = scipy.interpolate.LinearNDInterpolator(base_points, line_sm)
-        #z = interp(pixel_loc)
         z = scipy.interpolate.interpn((y,x), out_sm, pixel_loc, bounds_error=False)
-        end_time = time.time()
-        print("Interpolation proper took: {}".format(end_time-start_time))
         ordered = z.reshape(dest_size, order='C')
         dest_offset = ((dest_size[0]-src_size[0])/2.0, (dest_size[1]-src_size[1])/2.0)
         out_sm_list[sm_idx] = ordered
@@ -654,17 +649,11 @@ class PADStack:
     
     def rotate_thread_ctrl(self, base_sm, gc_params, pixel_loc, out_sm_list, out_offset_list, sm_idx):
         #print("Submodule index: {}".format(sm_idx))
-        start_time = time.time()
         out_sm = sm_expand(base_sm)
-        expand_time = time.time()
         dest_array, dest_offset = self.rotate_sm_preloc(out_sm+0, gc_params, pixel_loc)
-        end_time = time.time()
-        print("Thread {} expansion {}, rotation {}".format(sm_idx, expand_time-start_time, end_time-expand_time))
         out_sm_list[sm_idx] = dest_array
         #print("Thread control: {}".format(dest_offset))
         out_offset_list[sm_idx] = dest_offset
-        end_time = time.time()
-        print("Thread {} took {}.".format(sm_idx,end_time-start_time))
         return
     
     def calc_rot_size(self, img, theta):
@@ -706,7 +695,6 @@ class PADStack:
 
         gc_params = parse_gc_params(gc_params_filename)
 
-        print(gc_params)
         num_slices = len(self.imgStack)
         if num_slices == 0:
             return
@@ -760,12 +748,10 @@ class PADStack:
 
         gc_params = parse_gc_params(gc_params_filename)
 
-        print(gc_params)
         num_slices = len(self.imgStack)
         if num_slices == 0:
             return
 
-        print("Geocorr: {} slices".format(num_slices))
         pad_img_size = self.imgStack[0].shape
 
         out_stack = []
@@ -797,8 +783,6 @@ class PADStack:
         base_points[:,1] = base_y
         
         for slice_idx in range(num_slices):
-            start_time = time.time()
-            print("Slice start: ".format(start_time))
             out_slice = np.ndarray(full_size, dtype=np.float64) # We always have to allocate a new slice
             out_slice.fill(np.nan) # initialize to NaN
             
@@ -808,8 +792,6 @@ class PADStack:
 
             out_sm_list = [None] * len(sm_list)
             out_offset_list = [None] * len(sm_list) # Shallow copies for list of right lenbth
-            curr_time = time.time()
-            print("Initialize slice: {}".format(curr_time - start_time))
             rotate_params_list = []
             sm_idx = -1
             top_left_list = []
@@ -820,26 +802,19 @@ class PADStack:
                 curr_loc = matrix_loc_list[sm_idx]
                 curr_full_loc = full_loc_list[sm_idx]
 
-                #t = threading.Thread(target=self.rotate_thread_ctrl, args=(sm, curr_params, curr_loc, out_sm_list, out_offset_list, sm_idx))
                 t = threading.Thread(target=self.rotate_thread_ninterp, args=(sm, curr_params, curr_loc, curr_full_loc, base_points, out_sm_list, out_offset_list, sm_idx))
                 thread_list.append(t)
 
                 top_left_list.append((curr_params[2],curr_params[1]))
 
-            curr_time = time.time()
-            print("Threads created: {}".format(curr_time - start_time))
             for t in thread_list:
                 t.start()
 
-            curr_time = time.time()
-            print("Threads started: {}".format(curr_time - start_time))
-                
+                            
             for t in thread_list:
                 t.join()
 
-            curr_time = time.time()
-            print("Threads joined: {}".format(curr_time - start_time))
-            
+                        
             num_sm = len(sm_list)
             for sm_idx in range(num_sm):
                 curr_out_sm = out_sm_list[sm_idx]
@@ -854,9 +829,7 @@ class PADStack:
                 top_left_y = int(math.floor(top_left_list[sm_idx][0]-curr_offset[0]))
                 out_slice[top_left_y:(top_left_y+curr_out_sm.shape[0]),top_left_x:(top_left_x+curr_out_sm.shape[1])] = curr_out_sm
             self.imgStack[slice_idx] = out_slice
-            curr_time = time.time()
-            print("Slice assembled and copied: {}".format(curr_time - start_time))
-
+            
     def geocorr_thread(self, gc_params_filename=None):
         full_size=(612, 532)    # Size of a full normal camera frame after geocal
         sm_size = (128, 256)
