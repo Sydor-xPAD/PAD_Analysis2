@@ -7,10 +7,40 @@ import CreateSim
 import math
 import pickle
 import sys
+import configparser
 from scipy.optimize import curve_fit
+import glob
+
+cfg_parser = configparser.ConfigParser()
+cfg_parser.read("photon_mask.ini")
+
+fit_max_eval = int(cfg_parser['Default']['fit_max_eval'])
+bgFilename = cfg_parser['Default']['hist_bg_filename']
+fgGlobPattern = cfg_parser['Default']['hist_fg_globpattern']
+maskFilename = cfg_parser['Default']['mask_filename']
+image_width = int(cfg_parser['Default']['image_width'])
+image_height = int(cfg_parser['Default']['image_height'])
+num_caps = int(cfg_parser['Default']['num_caps'])
+file_offset = int(cfg_parser['Default']['file_offset'])
+file_gap = int(cfg_parser['Default']['file_gap'])
+sensor_bpp = int(cfg_parser['Default']['sensor_bpp'])
+
+sys_type = cfg_parser['Default']['sys_type']
+if sys_type == 'keckpad':
+    load_func = BKL.keckFrame
+elif sys_type == 'mmpad':
+    load_func = BKL.mmpadFrame
+else:
+    print("Unrecognized system type: " + sys_type)
+    sys.exit(1)
+
+clipPos = int(cfg_parser['Default']['clip_pos'])
+clipNeg = int(cfg_parser['Default']['clip_neg'])
+clip_thresh = float(cfg_parser['Default']['clip_thresh'])
+hist_bin_min = int(cfg_parser['Default']['hist_bin_min'])
+hist_bin_max = int(cfg_parser['Default']['hist_bin_max'])
 
 fit_invoke = 0;
-fit_max_eval = 300000
 def twoGauss(xdata, a, b, c, d, e, f, g):
     global fit_invoke;
     fit_invoke += 1;
@@ -95,85 +125,65 @@ if not b_mode_sel:
     
 
 # Specify the number of caps
-NUM_CAPS = 8
-CAP_LIMIT = NUM_CAPS            # Start by iterating over all caps
+CAP_LIMIT = num_caps            # Start by iterating over all caps
 if test_mode:
     CAP_LIMIT = 1               # Only test first cap if in test mode
     
-# Initialize the filenames
-#bgFilename = '/mnt/raid/keckpad/set-phHist/run-4ms_back/frames/4ms_back_00000001' +'.raw'
-bgFilename = 'adu_calc/30KV_1mA_25ms_b_00000001' +'.raw';
-#fgFilename = '/mnt/raid/keckpad/set-issbufPIX_40KV/run-scan_issbufPIX_f_1200/frames/scan_issbufPIX_f_1200_00000001.raw';
-maskFilename = 'single_pix.csv';
-
 pFolder = "vref_50kv"
 dFolder = "vref"
+
 backImageData = open(bgFilename,"rb")
 
-backStack = np.zeros((NUM_CAPS,512,512),dtype=np.double)
-numImages = int(os.path.getsize(bgFilename)/(1024+512*512*2))
+backStack = np.zeros((num_caps,image_height,image_width),dtype=np.double)
+numImages = int(os.path.getsize(bgFilename)/(file_gap+image_height*image_width*sensor_bpp/8))
 
 #Calc cap backs
 for fIdex in range(numImages):
-   payload = BKL.keckFrame(backImageData)
-   backStack[(payload[3]-1)%NUM_CAPS,:,:] += np.resize(payload[4],[512,512])
-backStack = backStack/ (numImages/8)
+   payload = load_func(backImageData)
+   backStack[(payload[3]-1)%num_caps,:,:] += np.resize(payload[4],[image_height,image_width])
+backStack = backStack/ (numImages/num_caps)
 
 
 # Initialize the extractor
 pixelExtractor = MaskExtract.MaskExtractor();
 pixelExtractor.load_mask(maskFilename);
-#uncomment below for single pixel analysis 
-#pixelExtractor.singlePixelMat = pixelExtractor.singlePixelMat[:,128:(128+128+1),256:(256+128+1)] # [caps, y1:y2, x1:x2]
 pixelExtractor.singlePixelMat = pixelExtractor.singlePixelMat[:,:,:] # [caps, y1:y2, x1:x2]
-# Load background image # Need to re-load and average instead.
-#bgImage = np.fromfile(bgFilename, dtype=np.double).reshape((-1,512,512));
 
-numFiles = 4
 
-for num in range(numFiles):
-    images = num * 1000 + 1
-    fgFilename = 'adu_calc/30KV_1mA_25ms_f_' + '{:08d}'.format(images) + '.raw'
-    #fgFilename = '/mnt/raid/keckpad/set-HeadRework/run-ph_40KV_fore3ms/frames/ph_40KV_fore3ms_00000001.raw'
-# Iterate over all foreground images
+fg_filelist = glob.glob(fgGlobPattern)
+for fgFilename in fg_filelist:
+    # Iterate over all foreground images
     fgImageFile = open(fgFilename, "rb");
-    numFgImages = int(os.path.getsize(fgFilename)/(1024+512*512*2));
+    numFgImages = int(os.path.getsize(fgFilename)/(file_gap+image_height*image_width*sensor_bpp/2));
 
 
     for fIdx in range(numFgImages):
-        payload = BKL.keckFrame(fgImageFile);
-        curr_frame = payload[4].reshape([512,512]);
-        fmbImg = curr_frame - backStack[(payload[3]-1)%NUM_CAPS,:,:];
-        #fmbImg = fmbImg[128:(128+128+1),256:(256+128+1)] #uncomment for looking at individual pixels
-        #-=-= XXX Comment this out for production
-        #fmbImg = CreateSim.CreateSim();
+        payload = load_func(fgImageFile);
+        curr_frame = payload[4].reshape([image_height,image_width]);
+        fmbImg = curr_frame - backStack[(payload[3]-1)%num_caps,:,:];
 
-        pixelExtractor.extract_frame(fmbImg, (payload[3]-1)%NUM_CAPS); # FIXME Assumes that all caps are being used in the foreground image
+        pixelExtractor.extract_frame(fmbImg, (payload[3]-1)%num_caps); # FIXME Assumes that all caps are being used in the foreground image
         
     # Close the file
     fgImageFile.close();
 
 # Now get some valid pixels
 valid_pixels = [];
-for cap_idx in range(NUM_CAPS):
+for cap_idx in range(num_caps):
     valid_pixels.append(np.array(pixelExtractor.valid_values[cap_idx]).astype(np.double))
-
-# valid_pixelsall= np.array(allpixels).reshape([1,-1])
-clipPos = 250
-clipNeg = -20
-clip_thresh = 0.000
 
 # Clip the arrays
 clipped_pixels = [];
-for cap_idx in range(NUM_CAPS):
+for cap_idx in range(num_caps):
     clipped_pixels.append(clip_hist(valid_pixels[cap_idx], clip_thresh));
 
 # Now histogram the arrays
 hist_pixels = [];
 # binRan = np.arange(-50,351);    # The bins for the histogram
-binRan = np.arange(-20,180);
+binRan = np.arange(hist_bin_min,hist_bin_max);
 
-for cap_idx in range(NUM_CAPS):
+
+for cap_idx in range(num_caps):
     hist_pixels.append((np.histogram(clipped_pixels[cap_idx], bins=binRan))[0]);
 
 # # Now do the curve fitting
@@ -283,14 +293,14 @@ if test_mode:
     plt.show()
         
 else:
-    fig,axs = plt.subplots(NUM_CAPS,1)
+    fig,axs = plt.subplots(num_caps,1)
     
     # Special case if only one cap
-    if NUM_CAPS == 1:
+    if num_caps == 1:
         axs = [axs]                 # Turn into a list so it can be subscripted
 
     peak_idx = num_peaks - 3;   # Analysis starts at 3 peaks, so subtract for index
-    for cap_idx in range(NUM_CAPS):
+    for cap_idx in range(num_caps):
         axs[cap_idx].hist(clipped_pixels[cap_idx], bins=binRan);
         axs[cap_idx].plot(binRan[:-1], fit_pixels[peak_idx][cap_idx], 'r--');
     plt.savefig('peak_fit.png')
@@ -309,7 +319,7 @@ else:
 
 if analysis_mode:
     peak_sel = num_peaks - 3;   # Starts at 3 peaks
-    for cap_idx in range(NUM_CAPS):
+    for cap_idx in range(num_caps):
         print("Cap {} Parameters".format(cap_idx))
         mu_string = "Mu".rjust(8)
         sigma_string = "Sigma".rjust(8)

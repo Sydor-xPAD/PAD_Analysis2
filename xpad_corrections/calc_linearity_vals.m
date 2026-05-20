@@ -1,5 +1,9 @@
 function [sigmasq, mu] = calc_linearity_vals(img_stack)
-  num_frames=size(img_stack)(3);
+  if (ndims(img_stack) == 2)
+    num_frames = 1;
+  else
+    num_frames=size(img_stack)(3);
+  endif
   sigma_vals = zeros(num_frames, 1);
   mu_vals = zeros(num_frames, 1);
 
@@ -12,7 +16,7 @@ function [sigmasq, mu] = calc_linearity_vals(img_stack)
       return
     else
       sigma_vals(frame_idx) = std(curr_pixels)^2;
-      mu_vals(frame_idx) = mean(curr_pixels)
+      mu_vals(frame_idx) = mean(curr_pixels);
     endif
   endfor
 

@@ -12,3 +12,4 @@ function avg_array = avg_caps(base_image, num_caps)
 
   return
 endfunction
+

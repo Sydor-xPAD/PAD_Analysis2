@@ -1,6 +1,7 @@
 clear
 
 input_filename = 'avg_image_8caps.raw';
+
 input_file = fopen(input_filename, 'rb');
 
 num_frames = 8;
@@ -73,7 +74,7 @@ std_diff = zeros(4, 4, num_frames);
 for frame_idx = 1:num_frames
   cap_mean = frame_mean(frame_idx);
   cap_std = frame_std(frame_idx);
-  
+
   for asic_row_idx=0:3
     start_row = asic_row_idx*asic_size+1;
     end_row = (asic_row_idx+1)*asic_size;
@@ -92,10 +93,10 @@ for frame_idx = 1:num_frames
 
       asic_mean(asic_row_idx+1, asic_col_idx+1) = curr_mean;
       asic_std(asic_row_idx+1, asic_col_idx+1) = curr_std;
-      
+
       mean_diff(asic_row_idx+1, asic_col_idx+1, frame_idx) = (curr_mean-cap_mean)/(0.5*(curr_mean+cap_mean));
       std_diff(asic_row_idx+1, asic_col_idx+1, frame_idx) = (curr_std-cap_std)/(0.5*(curr_mean+cap_mean));
-      
+
     endfor
   endfor
 endfor

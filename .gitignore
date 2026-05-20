@@ -4,10 +4,12 @@
 *.raw
 *.pyc
 *.*~
-<<<<<<< HEAD
 *.csv
 *.pickle
-=======
-single_pix.csv
-pixels.pickle
->>>>>>> faf948d4fe0eb72e6f6fdda0fb9a4b1fea138e94
+.DS_Store
+config.json
+.DS_Store
+bestK.pkl
+ana_dig.pkl
+!YFPlayground/Keck020_LLNL/*.csv
+/.venv

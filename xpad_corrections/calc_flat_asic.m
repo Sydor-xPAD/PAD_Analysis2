@@ -12,10 +12,10 @@ function flat_raster = calc_flat_asic(asic_raster, gain_thresh)
   line_mean = mean(curr_line);
 
   flat_raster = line_mean ./ asic_raster; # Compute the per-pixel gains
+  gain_raster = 1./flat_raster;           # Compute the gain, needed for thresholding below
 
-  ## Now handle the pixels with too low of a gain, which corresponds to
-  ## a big number in the flat_raster
-  low_pixels = find(flat_raster > (1/gain_thresh));
+  ## Now handle the pixels with too low of a gain
+  low_pixels = find(gain_raster < gain_thresh);
   flat_raster(low_pixels) = 1.0; # No-op their gains
 
   return
