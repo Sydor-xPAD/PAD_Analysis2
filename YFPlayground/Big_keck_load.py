@@ -127,7 +127,7 @@ class KeckFrame:
         for i in range(8):
             subModMetaData = headerbytes[s:s+24]
             subModMetaDataB = struct.unpack("<HHHHHHHHHHHH",subModMetaData) # 
-            SensorTemp[i] = subModMetaDataB[9]
+            SensorTemp[i] = subModMetaDataB[8]
             s += 8
 
         
@@ -142,10 +142,12 @@ class KeckFrame:
         data = np.fromfile(self.dataFile, count = (lengthParms[1] * lengthParms[2]), dtype = dt)
         footer = self.dataFile.read(self.footerSize) #read footer bytes 
         if self.imgType =='MMPAD':
-            footerB = struct.unpack("<448I",footer) #  read into list of uint32
+            #footerB = struct.unpack("<448I",footer) #  read into list of uint32
+            footerB = struct.unpack("<896H", footer) # read into list of uint16
             # ie: (2048-256)/4
         elif self.imgType == 'CORRECTED':
-            footerB = struct.unpack("<1000I",footer) #  read into list of uint32
+            #footerB = struct.unpack("<1000I",footer) #  read into list of uint32
+            footerB = struct.unpack("<2000H",footer) #  read into list of uint32
             # Use twice the length using 32bit Int, rather than doubles to not break the conversion routines.  
             # ie: (4256-256)/8
         elif self.imgType == 'KECKPADX2':
@@ -186,7 +188,8 @@ class KeckFrame:
             v_iss_buf_temp = [footerB[base_idx + 3 + i*24] for i in range(8)]
             vdda_current_temp = [footerB[base_idx + 4 + i*24] for i in range(8)]
             vdda_voltage_temp = [footerB[base_idx + 5 + i*24] for i in range(8)]
-            sensor_temp_temporary = [footerB[base_idx + 8 + i*24] for i in range(8)]
+            #sensor_temp_temporary = [footerB[base_idx + 8 + i*24] for i in range(8)]
+            sensor_temp_temporary = [footerB[base_idx + 20 + i*24] for i in range(8)] # Get the cold block temperature
             v_iss_buf_pix.extend(v_iss_buf_pix_temp)
             v_iss_ab.extend(v_iss_ab_temp)
             v_mon_out.extend(v_mon_out_temp)
