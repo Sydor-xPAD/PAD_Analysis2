@@ -1,4 +1,4 @@
-function [img_stack, num_frames] = read_xpad_image(filename, bpp, offset, gap, width, height, MAX_FRAMES = 1005)
+function [img_stack, num_frames] = read_xpad_image(filename, bpp, offset, gap, width, height, MAX_FRAMES = 8005)
   ## Make the image to store into
   img_stack = zeros(height, width, MAX_FRAMES);
 
