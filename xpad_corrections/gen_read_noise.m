@@ -86,18 +86,32 @@ diff_stack = raw_dark(:,:,stack_two_idx) - raw_dark(:,:,stack_one_idx);
 ## Change the filenames here to suit.
 bad_dark_pixels = imread(dark_mask_filename);
 bad_hot_pixels = imread(hot_mask_filename);
-disp('Loaded bad pixel maps')
+#disp('Loaded bad pixel maps')
 bad_pixels = bad_dark_pixels+bad_hot_pixels;
 bad_pixel_loc = find(bad_pixels != 0);
+
+### Use the stack reading functions
+bad_dark_pixels2 = double(pgm_read_stack(dark_mask_filename, num_caps));
+bad_hot_pixels2 = double(pgm_read_stack(hot_mask_filename, num_caps));
+bad_pixels2 = bad_dark_pixels2 + bad_hot_pixels2;
+bad_pixels3 = sum(bad_pixels2, 3);
+bad_pixel_loc2 = find(bad_pixels3 != 0);
+bad_pixels_nan = bad_pixels2;
+bad_pixels_nan(find(bad_pixels_nan)) = NaN;
 
                             #TODO Restore the bad-pixel functions
 ## Set all bad flat pixels to NaN
 ## Iterate over all caps
-#for slice_idx = 1:(num_frames/2)
-#  curr_slice = diff_stack(:,:,slice_idx);
-#  curr_slice(bad_pixel_loc) = NaN;
-#  diff_stack(:,:,slice_idx) = curr_slice;
-#endfor
+for slice_idx = 1:(num_frames/2)
+  curr_slice = diff_stack(:,:,slice_idx);
+  cap_idx = mod(slice_idx, num_caps);
+  if cap_idx == 0
+    cap_idx = 8;
+  endif
+  curr_bad_mask = bad_pixels_nan(:,:,cap_idx);
+  curr_slice = curr_slice + curr_bad_mask;
+  diff_stack(:,:,slice_idx) = curr_slice;
+endfor
 
 diff_file = fopen("read_noise_diff.raw", "wb");
 fwrite(diff_file, reshape(diff_stack,1,[]), "float64");
@@ -176,7 +190,7 @@ plot((1:asic_count)-1, bounce_level(:,cap_idx), format_str)
 endfor
 
 
-axis([0 45])
+axis([0 25])
 title("Read Noise and Bounce")
 xlabel("ASIC Index")
 ylabel("Level (ADU)")

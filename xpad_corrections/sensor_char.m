@@ -7,7 +7,7 @@ fclose(cfg_file);
 
 do_dark_analysis = false;
 do_dark_current = false;
-do_read_noise = false;
+do_read_noise = true;
 do_flatness = false;
 
 for cfg_idx = 1:size(cfg_list)(1)
@@ -76,6 +76,14 @@ img_desc.num_asics = num_asics;
 img_desc.x_margin = x_margin;
 img_desc.y_margin = y_margin;
 
+dark_mask_stack = double(pgm_read_stack(dark_mask_filename, num_caps));
+dark_mask_stack(find(dark_mask_stack)) = nan;
+hot_mask_stack = double(pgm_read_stack(hot_mask_filename, num_caps));
+hot_mask_stack(find(hot_mask_stack)) = nan;
+
+bad_mask_stack = dark_mask_stack + hot_mask_stack;
+
+
 ## First perform the dark analysis
 
 if do_dark_analysis
@@ -130,6 +138,17 @@ if do_read_noise
   num_dark_frames = num_dark_frames - num_skip_frames;
   ## -=-= TODO IM Add in bad pixel calculation
 
+  for frame_idx = 1:num_dark_frames
+    curr_frame = raw_dark_stack(:,:,frame_idx);
+    bad_frame_idx = mod(frame_idx, num_caps);
+    if bad_frame_idx == 0
+      bad_frame_idx = num_caps
+    endif
+    curr_frame = curr_frame + double(bad_mask_stack(:,:, bad_frame_idx));
+    raw_dark_stack(:,:,frame_idx) = curr_frame;
+  endfor
+  
+
   ## Create the pairs of stacks
   sub_dark_stack = raw_dark_stack(:,:,1:(num_dark_frames/2))-raw_dark_stack(:,:,(num_dark_frames/2+1):num_dark_frames);
 
@@ -177,8 +196,8 @@ if do_read_noise
     endfor
     fclose(csv_file);
   endfor
-  clear raw_dark_stack
-  clear sub_dark_stack
+  #clear raw_dark_stack
+  #clear sub_dark_stack
 endif
 
 if do_flatness

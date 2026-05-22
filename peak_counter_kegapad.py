@@ -20,7 +20,7 @@ import copy
 ASIC_HEIGHT = 128
 ASIC_WIDTH  = 128
 
-PEAKS_EXPECTED = 81
+PEAKS_EXPECTED = 25
 
 ## A named structure for geocal parameters
 class AsicCorrections:
@@ -131,9 +131,9 @@ class Peak_Image:
     def __init__(self):
         self.ASIC_HEIGHT = 128    ##< The height of an ASIC in pixels
         self.ASIC_WIDTH = 128     ##< The width of an ASIC in pixels
-        self.PEAKS_EXPECTED = 81  ##< The number of points in the mask pattern
-        self.LENGTH = 9           ##< The number of points on a side of the mask pattern
-        self.NUM_COLS = 4         ##< The number of columns of ASICs
+        self.PEAKS_EXPECTED = 25  ##< The number of points in the mask pattern
+        self.LENGTH = 5           ##< The number of points on a side of the mask pattern
+        self.NUM_COLS = 8         ##< The number of columns of ASICs
         self.NUM_ROWS = 4         ##< The number of rows of ASICS
         self.peak_img = None      ##< The image of peaks
         self.neighbor_mask = np.array([[1,1,1],[1,1,1],[1,1,1]]); ##< The mask to force 8-connection in the neighborhood labeling
@@ -405,7 +405,7 @@ delta_y_geo = [-(22 + 22.9/2.0), -(22.9/2.0), (22.9/2.0), (22 + 22.9/2.0)] # Dis
 # The path of the peak-detected image
 maskPath = "/home/iainm/temp/airbox_dup.tiff"
 maskPath = "perfect_grid.tiff"
-maskPath = "rot_pinhole.tiff"
+maskPath = "xpad_corrections/ihep_geocal_touchup.tif"
 
 # Read in the image
 data = imageio.imread(maskPath)
@@ -516,6 +516,7 @@ geo_offset_x = 9999             # Final result Much bigger than a full image for
 geo_offset_y = 9999             # Ibid
 geoparams_filename = "geocal_python.txt"
 geoparams_file = open(geoparams_filename, "w")
+total_theta = 0;
 for pass_idx in range(2):
     for submodule_idx in range(16):
         sm_row = int(submodule_idx / 4)
@@ -526,6 +527,7 @@ for pass_idx in range(2):
         avg_mag = curr_sm.avg_mag
         avg_theta = curr_sm.avg_theta
 
+        total_theta = total_theta + avg_theta;
         cx = avg_mag * (delta_x_geo[sm_col]) / pixel_size  - (curr_sm.rot_x[0] - ASIC_WIDTH/2);
         cy = avg_mag * (delta_y_geo[sm_row]) / pixel_size  - (curr_sm.rot_y[0] - ASIC_HEIGHT/2);
         gx = cx - ASIC_WIDTH/2
@@ -550,6 +552,8 @@ for pass_idx in range(2):
             head_col = cart_col % 2      # Two submodules per head row
             head_num = 0                 # Start from head 0
             head_sm = head_row * 2 + head_col # Simple offset
+
+            avg_theta = avg_theta - (total_theta/16)
             if (cart_col >= 2):
                 head_num = 1;   # Right half is second head
             sm_idx_new = head_sm + 8*head_num # 8 submodules per head
@@ -563,6 +567,9 @@ for point in full_grid:
         continue
     geocal_img.peak_img[int(point[0]),int(point[1])] = 200
 
+print("Average Angle: {}".format(total_theta/16*(180/3.1415926)))
+
+    
 print("Geocal Parameters")
 for asic_idx in range(16):
     sm_num = int(asic_idx/2)
