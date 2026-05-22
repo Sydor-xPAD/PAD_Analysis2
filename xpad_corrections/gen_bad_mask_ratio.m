@@ -55,6 +55,10 @@ for cfg_idx = 1:size(cfg_list)(1)
     readnoise_image_filename = curr_val;
   elseif strcmp(curr_name, "bpp")
     sensor_bpp = str2double(curr_val);
+  elseif strcmp(curr_name, "dark_slope_thresh")
+    dark_slope_thresh = str2num(curr_val);
+  elseif strcmp(curr_name, "hot_slope_thresh")
+    hot_slope_thresh = str2num(curr_val);
   endif
 endfor
 
@@ -135,14 +139,14 @@ total_bad = [];
 masked_total_bad = [];
 hot_bad = [];
 cold_bad = [];
-for curr_thresh=hot_iqr_thresh
-  [hot_img, pix_thresh] = thresh_image(diff_image, 0, curr_thresh, asic_width, asic_height);
+for curr_thresh=hot_slope_thresh
+  [hot_img, pix_thresh] = thresh_image_ratio(diff_image, 0, curr_thresh, asic_width, asic_height);
   hot_filt = [hot_filt pix_thresh];
 
   hot_total = sum(hot_img, 3);
-  out_name = sprintf("hot_iqr_%.4f.pgm", 1.34*curr_thresh+0.67); #Switch to Z
+  out_name = sprintf("hot_ratio_%.4f.pgm", 1.34*curr_thresh+0.67); #Switch to Z
   pgm_write(hot_total, out_name);
-  out_name = sprintf("hot_iqr_%.4f_stack.pgm", 1.34*curr_thresh+0.67);
+  out_name = sprintf("hot_ratio_%.4f_stack.pgm", 1.34*curr_thresh+0.67);
   pgm_write_stack(hot_img, out_name, num_caps);
   hot_bad = [hot_bad sum(reshape(isnan(hot_total),1,[]))];
 endfor
@@ -152,14 +156,14 @@ endfor
 ## Threshold out the hot pixels
 ## The threshold is the third argument in thresh_image(), below.
 cold_filt = [];
-for curr_thresh=dark_iqr_thresh
-  [cold_img, curr_filt] = thresh_image(diff_image, 1, curr_thresh, asic_width, asic_height);
+for curr_thresh=dark_slope_thresh
+  [cold_img, curr_filt] = thresh_image_ratio(diff_image, 1, curr_thresh, asic_width, asic_height);
   cold_filt = [cold_filt curr_filt];
 
   cold_total = sum(cold_img, 3);
-  out_name = sprintf("dark_iqr_%.4f.pgm", 1.34*curr_thresh+0.67);
+  out_name = sprintf("dark_ratio_%.4f.pgm", 1.34*curr_thresh+0.67);
   pgm_write(cold_total, out_name);
-  out_name = sprintf("dark_iqr_%.4f_stack.pgm", 1.34*curr_thresh+0.67);
+  out_name = sprintf("dark_ratio_%.4f_stack.pgm", 1.34*curr_thresh+0.67);
   pgm_write_stack(cold_img, out_name, num_caps);
   cold_bad = [cold_bad sum(reshape(isnan(cold_total),1,[]))];
 endfor

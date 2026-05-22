@@ -43,6 +43,8 @@ for cfg_idx = 1:size(cfg_list)(1)
     hot_mask_filename = curr_val;
   elseif strcmp(curr_name, "bpp")
     sensor_bpp = str2double(curr_val);
+  elseif strcmp(curr_name, "diff_image_filename")
+    diff_image_filename = curr_val;
   endif
 endfor
 
@@ -73,71 +75,34 @@ edge_mask(:, 1:(asic_width*2):image_width) = 1;
 edge_mask(:, (asic_width*2):(asic_width*2):image_width) = 1;
 edge_pixels = find(edge_mask != 0);
 
-[dark_raw, num_dark_frames] = read_xpad_image(dark_image_filename, sensor_bpp, offset, gap, image_width, image_height);
-disp('Loaded dark image')
-printf("Dark frames count: %i\n", num_dark_frames);
+## Load in the averaged dark stack
 
-# Skip the first NUM_SKIP_IMAGE images
-# Remember there are NUM_CAPS frames per image
-if (num_skip_frames > 0)
-  disp("Skipping dark frames: ")
-  disp(num_skip_frames)
-  dark_raw = dark_raw(:,:,(num_skip_frames+1):num_dark_frames);
-  num_dark_frames = num_dark_frames-num_skip_frames;
-endif
+bg_sub_file = fopen(diff_image_filename, "rb");
+bg_sub_image = zeros(image_height, image_width, num_caps);
 
-## With the dark current image loaded, we can average the values per-cap
-dark_image = avg_caps(dark_raw, num_caps);
-clear dark_raw
-disp('Averaged dark image')
-
-## Now repeat for the bright image
-[bright_raw, num_bright_frames] = read_xpad_image(bright_image_filename, sensor_bpp, offset, gap, image_width, image_height);
-disp('Loaded bright image')
-printf("Bright frames count: %i\n", num_bright_frames);
-
-# Skip the first NUM_SKIP_IMAGE images
-# Remember there are NUM_CAPS frames per image
-if (num_skip_frames > 0)
-  disp("Skipping frames: ")
-  disp(num_skip_frames)
-  bright_raw = bright_raw(:,:,(num_skip_frames+1):num_bright_frames);
-  num_bright_frames = num_bright_frames-num_skip_frames;
-endif
-
-## With the bright image loaded, we can average the values per-cap
-bright_image = avg_caps(bright_raw, num_caps);
-clear bright_raw
-disp('Averaged bright image')
-printf("Frames per cap: %i\n", num_bright_frames/num_caps);
-
-## Now do the background subtraction
-bg_sub_image = bright_image-dark_image;
-if (num_caps == 1)
-  new_bg_image = zeros([size(bg_sub_image) 2]);
-  new_bg_image(:,:,1) = bg_sub_image;
-  bg_sub_image = new_bg_image;
-endif
+for cap_idx=1:num_caps
+  [curr_frame, count_read] = fread(bg_sub_file, [image_width, image_height], "double", 0, "l");
+  bg_sub_image(:,:,cap_idx) = curr_frame';
+endfor
 
 disp('Completed background subtraction')
 
 ## We now need to NaN out the bad pixels.  These are contained in two PGM files
 ## Change the filenames here to suit.
-bad_dark_pixels = double(pgm_read_stack(dark_mask_filename, num_caps));
-bad_hot_pixels = double(pgm_read_stack(hot_mask_filename, num_caps));
+bad_dark_pixels = imread(dark_mask_filename);
+bad_hot_pixels = imread(hot_mask_filename);
 disp('Loaded bad pixel maps')
 
 ## -=-= XXX Makes no accounting for overflow of the sum, so the masks should only have values of 1
 bad_pixels = bad_dark_pixels+bad_hot_pixels; #Combine the two images
-bad_pixels_nan = bad_pixels;
-bad_pixels_nan(find(bad_pixels_nan != 0)) = NaN;
+bad_pixel_loc = find(bad_pixels != 0);       #Get the locations
 disp('Found bad pixels')
 
 ## Set all bad flat pixels to NaN
 ## Iterate over all caps
 for cap_idx = 1:num_caps
   curr_slice = bg_sub_image(:,:,cap_idx);
-  curr_slice = curr_slice + bad_pixels_nan(:,:,cap_idx);
+  curr_slice(bad_pixel_loc) = NaN;
   bg_sub_image(:,:,cap_idx) = curr_slice;
   disp('Masked bad pixels for cap ')
   cap_idx
@@ -153,7 +118,6 @@ pix_tq = zeros(asic_count, num_caps); #First and third quartiles
 pix_rawmean = zeros(asic_count, num_caps);
 pix_rawmed = zeros(asic_count, num_caps);
 
-bg_sub_mean = zeros(asic_count, num_caps);
 
 flat_mean = zeros(asic_count, num_caps);
 flat_fq = zeros(asic_count, num_caps);
@@ -187,14 +151,11 @@ for cap_idx = 1:num_caps
 
       asic_idx = asic_idx + 1;
 
-      
       curr_asic_pix = curr_frame(row_lower:row_upper, col_lower:col_upper);
       curr_asic_line = curr_asic_pix(1:numel(curr_asic_pix));
       curr_asic_line = curr_asic_line(find(isfinite(curr_asic_line)));
-      bg_sub_mean(asic_idx, cap_idx) = mean(curr_asic_line);
-      
       curr_flat_asic = flat_raster(row_lower:row_upper,col_lower:col_upper,cap_idx);
-      curr_flat_asic = reshape(curr_flat_asic, 1, []); # From the full Ibar/I
+      curr_flat_asic = reshape(curr_flat_asic, 1, []);
       curr_flat_asic = curr_flat_asic(find(isfinite(curr_flat_asic)));
       flat_pix = reshape(calc_flat_asic(curr_asic_pix, gain_thresh),1, []);
       flat_pix = flat_pix(find(isfinite(flat_pix)));
@@ -237,25 +198,14 @@ fclose(ff_file)
 
 figure(1)
 subplot(1,1,1)
-h = bar(pix_mean(:,1)-pix_mean(1,1))
+h = bar(0:(asic_count-1),1*(10.^(0.1*(pix_mean(:,1)-pix_mean(1,1)))))
 title("ASIC Gain Compared to ASIC 1")
+axis([0 35])
 xlabel("ASIC Number")
-ylabel("Gain (dB)")
+ylabel("Gain (%)")
+set(h(1), "basevalue", 1.0);
 print asic_gains.png
 
-for cap_idx=1:num_caps
-  figure(5)
-  h = bar(bg_sub_mean(:,cap_idx)/bg_sub_mean(1,1));
-  set(h(1), "basevalue", 1.0);
-  title_str = sprintf("ASIC Gain Cap %i Compared to ASIC 1, Cap 1", cap_idx);
-  title(title_str)
-  xlabel("ASIC Number")
-  ylabel("Gain")
-  file_str = sprintf("flat_compare_cap%i.png", cap_idx)
-  print(file_str)
-endfor
-
-  
 figure(2)
 subplot(1,1,1)
 plot(1:asic_count, pix_std(:,1), '-b*')
@@ -281,3 +231,18 @@ hold off
 # YF test
 #imshow(curr_frame)
 
+for cap_idx=1:8
+  
+  figure(10+cap_idx)
+  subplot(1,1,1)
+  h = bar(0:(asic_count-1),1*(10.^(0.1*(pix_mean(:,cap_idx)-pix_mean(1,1)))))
+  title_str = sprintf("Cap %i ASIC Gain Compared to ASIC 0, Cap 0", cap_idx-1);
+  title(title_str)
+  axis([-1 35])
+  xlabel("ASIC Number")
+  ylabel("Gain (%)")
+  set(h(1), "basevalue", 1.0);
+  out_name = sprintf("asic_gains_cap%i.png", cap_idx-1);
+  print(out_name)
+
+endfor

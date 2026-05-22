@@ -165,6 +165,7 @@ class Peak_Image:
         self.labeled_img = labeled_img
         self.num_objects = num_objects
 
+        imageio.imwrite("labeled_mask.png", labeled_img)
         return True
 
     ## Count the peaks in all the ASICs to verify correct number
@@ -182,6 +183,8 @@ class Peak_Image:
                 end_col = start_col + self.ASIC_WIDTH
                 curr_asic_pix = self.labeled_img[start_row:end_row,start_col:end_col]
                 distinct_val = set(curr_asic_pix.flat)
+                print(len(distinct_val))
+                print(distinct_val)
                 if not 0 in distinct_val:
                     print("ERROR: No background found in ASIC {},{}".format(row_idx, col_idx));
                     return False
@@ -405,8 +408,9 @@ delta_y_geo = [-(22 + 22.9/2.0), -(22.9/2.0), (22.9/2.0), (22 + 22.9/2.0)] # Dis
 # The path of the peak-detected image
 maskPath = "/home/iainm/temp/airbox_dup.tiff"
 maskPath = "perfect_grid.tiff"
-maskPath = "xpad_corrections/ihep_geocal_touchup.tif"
-
+maskPath = "rot_pinhole.tiff"
+maskPath = "ihep_geocal_verA.png"
+maskPath = "ihep_labeled_mask.png"
 # Read in the image
 data = imageio.imread(maskPath)
 #-=-= Changed file
@@ -484,8 +488,8 @@ for asic_row in range(4):
         res1 = minimize(geocal_img.calc_err, [1.0, 0, asic_row*128.0 + 0.5*128, asic_col*128.0+0.5*128], method='nelder-mead')
         #print(res1)
         res1_x = res1.x
-        my_grid = gen_grid(9, 11, res1_x[0], res1_x[1], offset=(res1_x[2], res1_x[3]))
-        curr_correction = AsicCorrections([9, 11, res1_x[0], res1_x[1], res1_x[2], res1_x[3]]);
+        my_grid = gen_grid(5, 11, res1_x[0], res1_x[1], offset=(res1_x[2], res1_x[3]))
+        curr_correction = AsicCorrections([5, 11, res1_x[0], res1_x[1], res1_x[2], res1_x[3]]);
         curr_correction.sq_err = res1.fun
         asic_fit_info.append(curr_correction)
         full_grid.extend(my_grid)
@@ -516,7 +520,6 @@ geo_offset_x = 9999             # Final result Much bigger than a full image for
 geo_offset_y = 9999             # Ibid
 geoparams_filename = "geocal_python.txt"
 geoparams_file = open(geoparams_filename, "w")
-total_theta = 0;
 for pass_idx in range(2):
     for submodule_idx in range(16):
         sm_row = int(submodule_idx / 4)
@@ -527,7 +530,6 @@ for pass_idx in range(2):
         avg_mag = curr_sm.avg_mag
         avg_theta = curr_sm.avg_theta
 
-        total_theta = total_theta + avg_theta;
         cx = avg_mag * (delta_x_geo[sm_col]) / pixel_size  - (curr_sm.rot_x[0] - ASIC_WIDTH/2);
         cy = avg_mag * (delta_y_geo[sm_row]) / pixel_size  - (curr_sm.rot_y[0] - ASIC_HEIGHT/2);
         gx = cx - ASIC_WIDTH/2
@@ -552,8 +554,6 @@ for pass_idx in range(2):
             head_col = cart_col % 2      # Two submodules per head row
             head_num = 0                 # Start from head 0
             head_sm = head_row * 2 + head_col # Simple offset
-
-            avg_theta = avg_theta - (total_theta/16)
             if (cart_col >= 2):
                 head_num = 1;   # Right half is second head
             sm_idx_new = head_sm + 8*head_num # 8 submodules per head
@@ -567,9 +567,6 @@ for point in full_grid:
         continue
     geocal_img.peak_img[int(point[0]),int(point[1])] = 200
 
-print("Average Angle: {}".format(total_theta/16*(180/3.1415926)))
-
-    
 print("Geocal Parameters")
 for asic_idx in range(16):
     sm_num = int(asic_idx/2)
@@ -593,6 +590,7 @@ for row_idx in range(4):
         end_col = start_col + ASIC_WIDTH
         curr_asic = labeled_img[start_row:end_row,start_col:end_col]
         distinct_val = set(curr_asic.flat)
+        print(distinct_val)
         if not 0 in distinct_val:
             print("ERROR: No background found in quadrant.");
         num_peaks = len(distinct_val - set([0]))

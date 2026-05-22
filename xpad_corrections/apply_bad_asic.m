@@ -3,7 +3,7 @@ function img_stack = apply_bad_asic(asic_map, asic_height, asic_width, base_imag
   num_y_asic = size(base_image)(1)/asic_height;
   img_stack = base_image;
   
-  for row_idx = 1:num_x_asic
+  for row_idx = 1:num_y_asic
     y_start = (row_idx-1)*asic_height+1;
     y_end = row_idx*asic_height;
     for col_idx = 1:num_x_asic

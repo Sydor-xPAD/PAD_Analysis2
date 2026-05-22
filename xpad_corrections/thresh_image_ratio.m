@@ -1,4 +1,4 @@
-function [mod_img, filt_prop] = thresh_image(base_img, bLow, thresh, asic_width, asic_height)
+function [mod_img, filt_prop] = thresh_image_ratio(base_img, bLow, thresh, asic_width, asic_height)
   mod_img = base_img;
 
   num_caps = size(base_img)(3);
@@ -18,7 +18,7 @@ function [mod_img, filt_prop] = thresh_image(base_img, bLow, thresh, asic_width,
         curr_asic = mod_img(y_start:y_end, x_start:x_end, cap_idx);
 
         
-        [new_img, curr_filt] = pixel_iqr_filt(curr_asic, bLow, thresh);
+        [new_img, curr_filt] = pixel_ratio_filt(curr_asic, bLow, thresh);
 
         mod_img(y_start:y_end, x_start:x_end, cap_idx) = new_img;        
         

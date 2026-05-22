@@ -79,7 +79,7 @@ bright_image = zeros(img_height, img_width, num_caps);
 %dark_image_filename = 'dark_combined.raw';
 
 ## Load in the whole stack
-[raw_dark, num_frames] = read_xpad_image(dark_image_filename, sensor_bpp, offset, gap, 512, 512);
+[raw_dark, num_frames] = read_xpad_image(dark_image_filename, sensor_bpp, offset, gap, img_width, img_height);
 disp("Loaded dark frames.")
 
 ## Skip the first NUM_SKIP_IMAGE background images
@@ -129,7 +129,7 @@ clear raw_dark
 ## Filename of a test pattern
 
 ## Load in the whole stack
-[raw_bright, num_frames] = read_xpad_image(bright_image_filename, sensor_bpp, offset, gap, 512, 512);
+[raw_bright, num_frames] = read_xpad_image(bright_image_filename, sensor_bpp, offset, gap, img_width, img_height);
 disp("Loaded bright frames.")
 
 
@@ -217,3 +217,5 @@ cold_total = sum(cold_img, 3);
 ## The pgm_write function is needed to convert NaNs and format the output properly
 pgm_write(cold_total, "dark_pixels.pgm");
 #pgm_write(hot_total, "hot_pixels.pgm");
+
+pgm_write_stack(cold_img, "dark_pixels.pgm", num_caps);

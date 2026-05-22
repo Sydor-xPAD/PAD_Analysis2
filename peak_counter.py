@@ -20,7 +20,7 @@ import copy
 ASIC_HEIGHT = 128
 ASIC_WIDTH  = 128
 
-PEAKS_EXPECTED = 81
+PEAKS_EXPECTED = 25
 
 ## A named structure for geocal parameters
 class AsicCorrections:
@@ -131,8 +131,8 @@ class Peak_Image:
     def __init__(self):
         self.ASIC_HEIGHT = 128    ##< The height of an ASIC in pixels
         self.ASIC_WIDTH = 128     ##< The width of an ASIC in pixels
-        self.PEAKS_EXPECTED = 81  ##< The number of points in the mask pattern
-        self.LENGTH = 9           ##< The number of points on a side of the mask pattern
+        self.PEAKS_EXPECTED = 25  ##< The number of points in the mask pattern
+        self.LENGTH = 5           ##< The number of points on a side of the mask pattern
         self.NUM_COLS = 4         ##< The number of columns of ASICs
         self.NUM_ROWS = 4         ##< The number of rows of ASICS
         self.peak_img = None      ##< The image of peaks
@@ -399,16 +399,19 @@ class Peak_Image:
         return total_dist
 
 # Set some of the geometric parameters
-delta_x_geo = [-(20.23/2 + 19.62) , (20.23/2)] # Distances in millimeters
-delta_y_geo = [-(22 + 23.6/2.0), -(23.6/2.0), (23.6/2.0), (22 + 23.6/2.0)] # Distances in millimeters
+delta_x_geo = [-(20.48/2 + 19.62) , (20.48/2)] # Distances in millimeters
+delta_y_geo = [-(22 + 22.9/2.0), -(22.9/2.0), (22.9/2.0), (22 + 22.9/2.0)] # Distances in millimeters
     
 # The path of the peak-detected image
 maskPath = "xpad_corrections/geocal_full_mask.tiff"
+maskPath = "/home/sydor/temp/gc_5ms_touchup_int.tif"
+maskPath = "/home/sydor/imtemp/xpad_corrections/airbox_repair_3/gc_bgsub_final.tif"
+maskPath = "llnl20_mask_touchedup.tiff"
 
 # Read in the image
 data = imageio.imread(maskPath)
 #-=-= Changed file
-data = imageio.imread("xpad_corrections/geocal_full_mask.tiff")
+data = imageio.imread("/home/sydor/projects/PAD_Analysis2/xpad_corrections/aps10-20260311/geo_mask_touchup.tif")
 
 print("Image Shape: {}".format(data.shape))
 print("Image Type: {}".format(data.dtype))
@@ -482,8 +485,8 @@ for asic_row in range(4):
         res1 = minimize(geocal_img.calc_err, [1.0, 0, asic_row*128.0 + 0.5*128, asic_col*128.0+0.5*128], method='nelder-mead')
         #print(res1)
         res1_x = res1.x
-        my_grid = gen_grid(9, 11, res1_x[0], res1_x[1], offset=(res1_x[2], res1_x[3]))
-        curr_correction = AsicCorrections([9, 11, res1_x[0], res1_x[1], res1_x[2], res1_x[3]]);
+        my_grid = gen_grid(5, 11, res1_x[0], res1_x[1], offset=(res1_x[2], res1_x[3]))
+        curr_correction = AsicCorrections([5, 11, res1_x[0], res1_x[1], res1_x[2], res1_x[3]]);
         curr_correction.sq_err = res1.fun
         asic_fit_info.append(curr_correction)
         full_grid.extend(my_grid)
@@ -514,6 +517,10 @@ geo_offset_x = 9999             # Final result Much bigger than a full image for
 geo_offset_y = 9999             # Ibid
 geoparams_filename = "geocal_python.txt"
 geoparams_file = open(geoparams_filename, "w")
+geoparams_leveled_filename = "geocal_python_leveled.txt"
+geoparams_leveled_file = open(geoparams_leveled_filename, "w");
+total_theta = 0; # The total of rotation to compute an average
+corner_array = [] # list to hold the adjusted corners of the submodules
 for pass_idx in range(2):
     for submodule_idx in range(8):
         sm_row = int(submodule_idx / 2)
@@ -539,13 +546,50 @@ for pass_idx in range(2):
             if (gy < geo_offset_y):
                 geo_offset_y = gy
         else:
-            gx = gx - geo_offset_x
-            gy = gy - geo_offset_y
+            gx = gx - geo_offset_x + 3.0
+            gy = gy - geo_offset_y + 3.0
+            total_theta += avg_theta; # Get the new rotation
             correction_string = "{:d}, {:d}, {}, {:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}, {:d}".format(submodule_idx, 160, "1A", avg_theta * 57.295, gx, gy, avg_mag, curr_sm.total_err, 0, 0)
+            corner_array.append((submodule_idx, avg_theta, gx, gy, avg_mag, curr_sm.total_err)); # Save the corners and their data
             print(correction_string)
             geoparams_file.write(correction_string + "\n")
         
 geoparams_file.close()
+# Now compute the leveled image
+mean_theta = -total_theta/8; # This is how much to adjust the thetas
+geo_offset_x = 9999999
+geo_offset_y = 9999999
+for pass_idx in range(2):
+    for submodule_idx in range(8):
+        avg_theta = corner_array[submodule_idx][1]+mean_theta # Adjust for the new angle
+        gx = corner_array[submodule_idx][2]
+        gy = corner_array[submodule_idx][3]
+        avg_mag = corner_array[submodule_idx][4]
+        total_err = corner_array[submodule_idx][5]
+
+        cx = gx*math.cos(mean_theta)-gy*math.sin(mean_theta)
+        cy = gx*math.sin(mean_theta)+gy*math.cos(mean_theta)
+        
+        if (pass_idx == 0):
+            #-=-= DEBUGGING
+            print('Centers: Left: ({:8.3f}, {:8.3f}) Right: ({:8.3f}, {:8.3f})'.format(cy,cx,cyr,cxr))
+            if (gx < geo_offset_x):
+                geo_offset_x = gx
+            if (gy < geo_offset_y):
+                geo_offset_y = gy
+        else:
+            gx = gx - geo_offset_x + 3.0
+            gy = gy - geo_offset_y + 3.0
+            
+            correction_string = "{:d}, {:d}, {}, {:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}, {:d}".format(submodule_idx, 160, "1A", avg_theta * 57.295, gx, gy, avg_mag, curr_sm.total_err, 0, 0)
+            corner_array.append((submodule_idx, avg_theta, gx, gy, avg_mag, total_err)); # Save the corners and their data
+            print(correction_string)
+            geoparams_leveled_file.write(correction_string + "\n")
+
+geoparams_leveled_file.close()
+
+
+
 for point in full_grid:
     if (point[0] < 0) or (point[0] >= 512) or (point[1] < 0) or (point[1] >= 512):
         continue

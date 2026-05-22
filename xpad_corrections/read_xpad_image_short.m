@@ -1,6 +1,6 @@
-function [img_stack, num_frames] = read_xpad_image(filename, bpp, offset, gap, width, height, MAX_FRAMES = 8005)
+function [img_stack, num_frames] = read_xpad_image_short(filename, bpp, offset, gap, width, height, MAX_FRAMES = 8005)
   ## Make the image to store into
-  img_stack = zeros(height, width, MAX_FRAMES);
+  img_stack = zeros(height, width, MAX_FRAMES,"uint16");
 
   img_file = fopen(filename, 'rb');
 
@@ -24,7 +24,7 @@ function [img_stack, num_frames] = read_xpad_image(filename, bpp, offset, gap, w
 
   fseek(img_file, gap, SEEK_CUR);
 
-  img_stack(:,:,num_frames) = curr_array;
+  img_stack(:,:,num_frames) = uint16(curr_array);
 
   while(data_pending == 1)
     ## Read in the data

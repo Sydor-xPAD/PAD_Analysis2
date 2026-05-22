@@ -1,6 +1,6 @@
 clear
 
-output_dir = 'aps10-corr-20260311';
+output_dir = 'aps10-20260223';
 perform_test = 0;
 std_dir = [output_dir '/standard'];
 noedge_dir = [output_dir '/no_edge'];
@@ -28,7 +28,7 @@ gen_bad_mask_ratio;
 load corr_gen_param.octave
 copyfile("dark_pixels.pgm", [std_dir '/dark_pixels_val.pgm']);
 copyfile("dark_pixels.pgm", [unityedge_dir '/dark_pixels_val.pgm']);
-#gen_dark_mask_ratio;
+#gen_dark_mask;
 load corr_gen_param.octave
 copyfile("dark_pixels.pgm", std_dir);
 copyfile("hot_pixels.pgm", std_dir);
@@ -43,7 +43,7 @@ gen_bad_mask_ratio;
 load corr_gen_param.octave
 copyfile("dark_pixels.pgm", [noedge_dir "/dark_pixels_val.pgm"]);
 filter_edge = 1;
-#gen_dark_mask_ratio;
+#gen_dark_mask;
 load corr_gen_param.octave
 copyfile("dark_pixels.pgm", noedge_dir);
 copyfile("hot_pixels.pgm", noedge_dir);
@@ -59,20 +59,20 @@ printf("Generating standard map.\n");
 ## First we need the standard bad pixel masks
 copyfile([std_dir '/*.pgm'], ".");
 clear filter_edge               # No special handling of edge pixels
-create_flatfield;
+create_flatfield_withdiff;
 load corr_gen_param.octave
 copyfile('flatfield.raw', std_dir);
 
 printf("Generating Unity-Edge map.\n");
 filter_edge = 1;
-create_flatfield;
+create_flatfield_withdiff;
 load corr_gen_param.octave
 copyfile('flatfield.raw', unityedge_dir);
 
 printf("Generating No-Edge map.\n");
 clear filter_edge
 copyfile([noedge_dir '/*.pgm'], "."); #Need the no-edge mask to NaN out the edge pixels in the flatfield
-create_flatfield;
+create_flatfield_withdiff;
 load corr_gen_param.octave
 copyfile('flatfield.raw', noedge_dir);
 
