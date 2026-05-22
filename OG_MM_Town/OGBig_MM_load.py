@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import struct
 
 # cwd = os.getcwd()
-# imageData = open(cwd +"\\PAD_Anal\\mm_sample.raw","rb")
+# imageData = open(cwd +"\\PAD_Analysis2\\mm_sample.raw","rb")
 
 def keckFrame(dataFile):
 

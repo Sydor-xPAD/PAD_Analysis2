@@ -1,4 +1,4 @@
-#Avg_IMG_Viewer.py created by BWM 9/12/22
+#IMG_Viewer_Dilation.py created by BWM 9/12/22
 #program to create pretty averaged images plot and save them
 
 import numpy as np

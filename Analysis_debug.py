@@ -1,4 +1,4 @@
-#Bias_Anal.py created by BWM 8/31/22
+#Analysis_debug.py created by BWM 8/31/22
 #program to analyze keck data while varying DAC bias voltages
 
 import numpy as np

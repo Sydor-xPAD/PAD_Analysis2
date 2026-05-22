@@ -7,7 +7,7 @@ import tkinter.filedialog as fd
 
 # ####file for debug####
 # cwd = os.getcwd()
-# foreFile = cwd +"/PAD_Anal/f3ms_00000001.raw"
+# foreFile = cwd +"/PAD_Analysis/f3ms_00000001.raw"
 # foreImage = open(foreFile,"rb")
 # numImagesF = int(os.path.getsize(foreFile)/(1024+512*512*2))
 # foreStack = np.zeros((numImagesF,8,612,532),dtype=np.double)
