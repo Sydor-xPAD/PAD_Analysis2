@@ -1,6 +1,12 @@
-import padstack
 import numpy as np
 import sys
+import os
+import inspect
+
+currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+parentdir = os.path.dirname(currentdir)
+sys.path.insert(0, parentdir) 
+import padstack
 
 ## Here we load two files for the foreground and background images.
 ## rtsup outputs images into files of 1000 images each.  These inidividual
@@ -52,7 +58,7 @@ print(sys._is_gil_enabled())
 fg_img.geocorr_truethread("/home/iainm/temp/xPAD00013/gc_params.cfg")
 
 ## Here we save the image as a series of double rasters in a raw binary format.
-out_file = open("vaccuum_airbox_adaptive.img", "wb");
+out_file = open("glassyc.img", "wb");
 
 for image_frame in fg_img.imgStack:
     image_frame.tofile(out_file)
@@ -61,5 +67,5 @@ out_file.close()
 
 ## Save the image and metadata in an HDF5 file.  The image raster is in dataset
 ## `image`
-fg_img.saveImg("vacuum_airbox.hdf5")
+fg_img.saveImg("glassyc.hdf5")
 

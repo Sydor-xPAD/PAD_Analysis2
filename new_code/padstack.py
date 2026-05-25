@@ -388,20 +388,22 @@ class PADStack:
                     peak_ret = scipy.signal.find_peaks(curr_hist, height=self.fpHeight, width=self.fpWidth);
                     curr_peaks = peak_ret[0]
 
-                    if (frame_idx == 3) and (y_idx==1):
-                        hist_filename = "histogram_x{}.txt".format(x_idx)
-                        hist_file = open(hist_filename, "w")
+                    FRAME_DIAGNOSTICS = 0
+                    if FRAME_DIAGNOSTICS != 0:
+                        if (frame_idx == 3) and (y_idx==1):
+                            hist_filename = "histogram_x{}.txt".format(x_idx)
+                            hist_file = open(hist_filename, "w")
 
-                        for hist_pop in curr_hist:
-                            hist_file.write(str(hist_pop))
-                            hist_file.write(",")
-                        hist_file.write("\n")
+                            for hist_pop in curr_hist:
+                                hist_file.write(str(hist_pop))
+                                hist_file.write(",")
+                                hist_file.write("\n")
 
-                        for hist_edge in bin_edge:
-                            hist_file.write(str(hist_edge))
-                            hist_file.write(",")
-                        hist_file.write("\n")
-                        hist_file.close()
+                            for hist_edge in bin_edge:
+                                hist_file.write(str(hist_edge))
+                                hist_file.write(",")
+                            hist_file.write("\n")
+                            hist_file.close()
                         
 
                     #print(len(curr_peaks))
