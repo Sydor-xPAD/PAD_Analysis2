@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-#created by BWM to take Kecks big data load
+#created by BWM 
 #8/30/22 first creation
 
 # YF 6/23/23 - Tweaks

@@ -16,7 +16,7 @@ INTERACTIVE_MODE = 1   # 1 = Use terminal input and UI buttons to
 
 
 import numpy as np
-import Big_keck_load as BKL
+import xPadParser as BKL
 import os
 import matplotlib.pyplot as plt
 import sys

@@ -5,7 +5,7 @@
 # Look at Cornell data taken at S7 on Oct 2023
 
 import numpy as np
-import Big_MM_load as BML
+import mmLoad as BML
 import os
 import matplotlib.pyplot as plt
 import sys
