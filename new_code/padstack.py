@@ -6,6 +6,25 @@ import multiprocessing
 import threading
 import time
 import h5py
+import math
+
+class GaussFit2Readnoise:
+    def init(self):
+        self.readnoise = 10
+        
+    def computeGaussian(self, x, sigma, mu):
+        g_var = sigma*sigma     # Gaussian variance
+        result = 1/(math.sqrt(2*math.pi*g_var))*math.exp(-math.pow(x-mu0,2.0)/(2*g_var))
+        return result
+    def computeDist(self, x, scale_readnoise, mean_readnoise, scale2, mean2, sigma2, dc):
+        readnoise_var = self.readnoise*self.readnoise # Sigma Squared
+        peak_2_var = sigma2*sigma2
+
+        gauss_readnoise = scale_readnoise * self.computeGaussian(x, self.readnoise, mean_readnoise)
+        gauss_2 = scale2*self.computeGaussian(x, peak_2_var, mean2)
+        return (gauss_readnoise+gauss_2+dc)
+        
+        
 
 class PADSM:
     SM_BASE_WIDTH = 256
@@ -81,7 +100,54 @@ def split_sm(img, sm_size):
             sm_list.append(sm_append)
 
     return sm_list
-            
+
+def split_sm_kega(img, sm_size):
+    img_size = img.shape;
+    #print(img_size, sm_size)
+    if img_size[0] % sm_size[0] != 0 or \
+       img_size[1] % sm_size[1] != 0:
+        return [];           # Invalid size
+
+    num_sm_row = img_size[0]//sm_size[0]
+    num_sm_col = img_size[1]//sm_size[1]
+
+    sm_list = []
+    sm_idx = -1
+
+    if (num_sm_row * num_sm_col) != 16:
+        return []               # Invalid size
+
+
+    #Submodules for KegaPAD are arranged as
+    # 0    1    8    9
+    # 2    3    10   11
+    # 4    5    12   13
+    # 6    7    14   15
+    for row_idx in range(num_sm_row):
+        start_row = row_idx*sm_size[0]
+        end_row = start_row+sm_size[0]
+        for col_idx in range(2):
+            start_col = col_idx*sm_size[1]
+            end_col = start_col+sm_size[1]
+            sm_idx = sm_idx+1
+            curr_sm = img[start_row:end_row, start_col:end_col]
+            sm_append = curr_sm[:] # Make sure we copy the data
+            sm_list.append(sm_append)
+
+    for row_idx in range(num_sm_row):
+        start_row = row_idx*sm_size[0]
+        end_row = start_row+sm_size[0]
+        for col_idx in range(2):
+            start_col = col_idx*sm_size[1]+512
+            end_col = start_col+sm_size[1]+512
+            sm_idx = sm_idx+1
+            curr_sm = img[start_row:end_row, start_col:end_col]
+            sm_append = curr_sm[:] # Make sure we copy the data
+            sm_list.append(sm_append)
+    
+    return sm_list
+
+
 def sm_expand(sm_img):
     
     out_sm = np.ndarray((128, 259), dtype=np.float64)*0
@@ -317,7 +383,58 @@ class PADStack:
                     sensor_temp_dset[img_idx] = self.metaStack[img_idx].sensorTemp
                     
         return
-        
+
+    def saveImgKega(self, out_filename):
+        with h5py.File(out_filename, 'w') as f:
+            num_img = len(self.imgStack)
+            if num_img > 0:
+                img_size = self.imgStack[0].shape
+                dset = f.create_dataset("image", (num_img, img_size[0], img_size[1]), dtype=np.double)
+                for img_idx in range(num_img):
+                    dset[img_idx,:,:] = self.imgStack[img_idx]
+                if len(self.debounce_log) > 0:
+                    num_asic = 32 #-=-= XXX This must be changed for KegaPAD
+                    db_amt_dset = f.create_dataset("debounce_amount", (num_img, num_asic), dtype=np.double)
+                    db_msg_dset = f.create_dataset("debounce_msg", (num_img, num_asic), dtype=h5py.string_dtype())
+                    for db in self.debounce_log:
+                        img_idx = db[0]
+                        asic_idx = db[1]
+                        db_amt = db[2]
+                        db_msg = db[3]
+                        db_amt_dset[img_idx,asic_idx] = db_amt
+                        db_msg_dset[img_idx,asic_idx] = db_msg
+
+                if len(self.op_log) > 0:
+                    op_dset = f.create_dataset("operation_log", (len(self.op_log),), dtype=h5py.string_dtype())
+                    for op_idx in range(len(self.op_log)):
+                        op_dset[op_idx] = self.op_log[op_idx]
+
+                f['/image'].attrs['cap_mask'] = self.capMask
+                integ_dset = f.create_dataset("integration_time", (num_img,), dtype=np.float64)
+                inter_dset = f.create_dataset("interframe_time", (num_img,), dtype=np.float64)
+                capnum_dset = f.create_dataset("cap_num", (num_img,), dtype='i')
+                v_iss_buf_pix_dset = f.create_dataset("v_iss_buf_pix", (num_img, len(self.metaStack[0].v_iss_buf_pix)), dtype=np.float64)
+                v_iss_ab_dset = f.create_dataset("v_iss_ab", (num_img, len(self.metaStack[0].v_iss_ab)), dtype=np.float64)
+                v_mon_out_dset = f.create_dataset("v_mon_out", (num_img, len(self.metaStack[0].v_mon_out)), dtype=np.float64)
+                v_iss_buf_dset = f.create_dataset("v_iss_buf", (num_img, len(self.metaStack[0].v_iss_buf)), dtype=np.float64)
+                vdda_current_dset = f.create_dataset("vdda_current", (num_img, len(self.metaStack[0].vdda_current)), dtype=np.float64)
+                vdda_volts_dset = f.create_dataset("vdda_volts", (num_img, len(self.metaStack[0].vdda_volts)), dtype=np.float64)
+                sensor_temp_dset = f.create_dataset("sensor_temp", (num_img, len(self.metaStack[0].sensorTemp)), dtype=np.float64)
+                for img_idx in range(num_img):
+                    integ_dset[img_idx] = self.metaStack[img_idx].integTime
+                    inter_dset[img_idx] = self.metaStack[img_idx].interTime
+                    capnum_dset[img_idx] = self.metaStack[img_idx].capNum
+                    v_iss_buf_pix_dset[img_idx] = self.metaStack[img_idx].v_iss_buf_pix
+                    v_iss_ab_dset[img_idx] = self.metaStack[img_idx].v_iss_ab
+                    v_mon_out_dset[img_idx] = self.metaStack[img_idx].v_mon_out
+                    v_iss_buf_dset[img_idx] = self.metaStack[img_idx].v_iss_buf
+                    vdda_current_dset[img_idx] = self.metaStack[img_idx].vdda_current
+                    vdda_volts_dset[img_idx] = self.metaStack[img_idx].vdda_volts
+                    sensor_temp_dset[img_idx] = self.metaStack[img_idx].sensorTemp
+                    
+        return
+    
+    
                 
     def loadImg(self, xpad_file, imgType):
         # Get the details from the image file
@@ -353,6 +470,8 @@ class PADStack:
         
     def apply_debounce(self):
         self.debounce_log = []; # Clear the debounce log
+        self.asic_stats = []
+        self.asic_details = []
         ASIC_WIDTH = 128
         ASIC_HEIGHT = 128
         ASIC_MARGIN = 4
@@ -365,9 +484,18 @@ class PADStack:
         debounce_msg = ""
 
         self.op_log.append("Applied debounce")
-        
+               
         for frame_idx in range(numImages):
             curr_frame = self.imgStack[frame_idx]
+            ADJUST_RANGE = 1
+            if ADJUST_RANGE != 0:
+                sample_region = curr_frame[208:240,401:494].flatten()
+                adj_factor = np.nanmedian(sample_region)
+                print("Frame adjustment factor is {}".format(adj_factor))
+                curr_frame = curr_frame - adj_factor
+                sample_region = curr_frame[208:240,401:494].flatten()
+                adj_factor = np.nanmedian(sample_region)
+                print("After adjustment, new value is: {}".format(adj_factor))
             for x_idx in range(asic_x_count):
                 asic_x_min = x_idx*ASIC_WIDTH
                 asic_x_max = asic_x_min + ASIC_WIDTH-1
@@ -380,10 +508,16 @@ class PADStack:
                     y_max = y_min+ASIC_HEIGHT - ASIC_MARGIN - ASIC_MARGIN
                     curr_asic = curr_frame[y_min:y_max,x_min:x_max]
                     asic_idx = y_idx*asic_x_count+x_idx;
+
+                    # Get some statistics on the ASIC
+                    
+                    in_range_array = np.where(np.logical_and(np.greater_equal(curr_asic, self.histBinStart),np.less_equal(curr_asic,self.histBinEnd)), curr_asic, [np.nan]).flatten()
+                    self.asic_stats.append([frame_idx, asic_idx, np.nanmean(in_range_array), np.nanmedian(in_range_array)])
                     
                     # First, compute a histogram of the pixels
                     curr_hist,bin_edge = np.histogram(curr_asic, bins=self.numBins, range=(self.histBinStart, self.histBinEnd))
 
+                    self.asic_details.append([frame_idx, asic_idx, curr_hist, bin_edge])
                     
                     peak_ret = scipy.signal.find_peaks(curr_hist, height=self.fpHeight, width=self.fpWidth);
                     curr_peaks = peak_ret[0]
@@ -432,6 +566,11 @@ class PADStack:
                         #print(quad_fit_ret)
                         zero_peak = vertex_pos(*quad_coeff);
                         debounce_amount = zero_peak
+                        ## XXX FIXME OVERRIDE
+                        if (asic_idx == 11):
+                            print("Raw peak amount: {}".format(zero_peak))
+                        debounce_amount = 0
+                        zero_peak = 0
                         if (zero_peak >= self.fpBound[0]) and (zero_peak <= self.fpBound[1]):
                             curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] = curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] - zero_peak
                             debounce_reason = "Adaptive quadratic"
@@ -442,7 +581,8 @@ class PADStack:
                         debounce_reason = "No peaks found"
                         deboucne_msg = ""
                     self.debounce_log.append([frame_idx, asic_idx, debounce_amount, debounce_reason, debounce_msg])        
-
+            self.imgStack[frame_idx] = curr_frame
+            
     def applyDefect(self, defectImg):
         if defectImg.spType != self.SP_TYPE_DEFECT:
             print("Invalid defect map.")
@@ -834,6 +974,95 @@ class PADStack:
                 top_left_y = int(math.floor(top_left_list[sm_idx][0]-curr_offset[0]))
                 out_slice[top_left_y:(top_left_y+curr_out_sm.shape[0]),top_left_x:(top_left_x+curr_out_sm.shape[1])] = curr_out_sm
             self.imgStack[slice_idx] = out_slice
+
+    def geocorr_truethread_kega(self, gc_params_filename=None):
+        full_size=(612, 1072)    # Size of a full normal camera frame after geocal
+        sm_size = (128, 256)
+
+        gc_params = parse_gc_params(gc_params_filename)
+
+        num_slices = len(self.imgStack)
+        if num_slices == 0:
+            return
+
+        pad_img_size = self.imgStack[0].shape
+
+        out_stack = []
+
+        ## Compute the parameters for the geocorr
+        matrix_loc_list = []
+        full_loc_list = []
+        sm_idx = -1
+        sm_list = split_sm_kega(self.imgStack[0], sm_size)
+        for sm in sm_list:
+            sm_idx = sm_idx+1
+            matrix_loc = self.compute_loc_matrix(sm, gc_params[sm_idx])
+            y_locs = matrix_loc[0].reshape((-1,1))
+            x_locs = matrix_loc[1].reshape((-1,1))
+            num_locs = y_locs.shape[0]
+            full_loc = np.ndarray((num_locs, 2), dtype=np.float64)
+            for loc_idx in range(num_locs):
+                full_loc[loc_idx, 0] = y_locs[loc_idx,0]
+                full_loc[loc_idx, 1] = x_locs[loc_idx,0]
+            matrix_loc_list.append(matrix_loc)
+            full_loc_list.append(full_loc)
+        x_src_pos = np.arange(259)
+        y_src_pos = np.arange(128)
+        base_x, base_y = np.meshgrid(x_src_pos, y_src_pos)
+        base_x = base_x.reshape(-1)
+        base_y = base_y.reshape(-1)
+        base_points = np.ndarray((base_x.shape[0],2))
+        base_points[:,0] = base_x
+        base_points[:,1] = base_y
+        
+        for slice_idx in range(num_slices):
+            out_slice = np.ndarray(full_size, dtype=np.float64) # We always have to allocate a new slice
+            out_slice.fill(np.nan) # initialize to NaN
+            
+            curr_slice = self.imgStack[slice_idx] # Need a copy for iterative replacement
+            
+            sm_list = split_sm_kega(self.imgStack[slice_idx], sm_size)
+
+            out_sm_list = [None] * len(sm_list)
+            out_offset_list = [None] * len(sm_list) # Shallow copies for list of right lenbth
+            rotate_params_list = []
+            sm_idx = -1
+            top_left_list = []
+            thread_list = []
+            for sm in sm_list:
+                sm_idx = sm_idx + 1
+                curr_params = gc_params[sm_idx]
+                curr_loc = matrix_loc_list[sm_idx]
+                curr_full_loc = full_loc_list[sm_idx]
+
+                t = threading.Thread(target=self.rotate_thread_ninterp, args=(sm, curr_params, curr_loc, curr_full_loc, base_points, out_sm_list, out_offset_list, sm_idx))
+                thread_list.append(t)
+
+                top_left_list.append((curr_params[2],curr_params[1]))
+
+            for t in thread_list:
+                t.start()
+
+                            
+            for t in thread_list:
+                t.join()
+
+                        
+            num_sm = len(sm_list)
+            for sm_idx in range(num_sm):
+                curr_out_sm = out_sm_list[sm_idx]
+                curr_offset = out_offset_list[sm_idx]
+                #print("Top left list:")
+                #print(top_left_list[sm_idx])
+                #print("Offset:")
+                #print(curr_offset)
+                #print("Len offset list:{}".format(len(out_offset_list)))
+                #print("Shape(offset_item):{}".format(out_offset_list[0].shape))
+                top_left_x = int(math.floor(top_left_list[sm_idx][1]-curr_offset[1]))
+                top_left_y = int(math.floor(top_left_list[sm_idx][0]-curr_offset[0]))
+                out_slice[top_left_y:(top_left_y+curr_out_sm.shape[0]),top_left_x:(top_left_x+curr_out_sm.shape[1])] = curr_out_sm
+            self.imgStack[slice_idx] = out_slice
+    
             
     def geocorr_thread(self, gc_params_filename=None):
         full_size=(612, 532)    # Size of a full normal camera frame after geocal
