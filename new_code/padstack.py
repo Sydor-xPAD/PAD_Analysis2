@@ -7,6 +7,7 @@ import threading
 import time
 import h5py
 import math
+import imageio
 
 class GaussFit2Readnoise:
     def __init__(self):
@@ -468,7 +469,7 @@ class PADStack:
         kf.close()
         self.op_log = []        # Start with a blank log of recorded operations
         
-    def apply_debounce(self):
+    def apply_debounce(self, MaskFilename = None):
         self.debounce_log = []; # Clear the debounce log
         self.asic_stats = []
         self.asic_details = []
@@ -484,7 +485,14 @@ class PADStack:
         debounce_msg = ""
 
         self.op_log.append("Applied debounce")
-               
+
+        use_maskfile = True
+        mask_image = np.ndarray((self.imgSize[0], self.imgSize[1]))
+        if MaskFilename is None:
+            use_maskfile = False
+        else:
+            mask_image = imageio.imread(MaskFilename)
+            
         for frame_idx in range(numImages):
             curr_frame = self.imgStack[frame_idx]
             ADJUST_RANGE = 0
@@ -509,6 +517,7 @@ class PADStack:
                     curr_asic = curr_frame[y_min:y_max,x_min:x_max]
                     asic_idx = y_idx*asic_x_count+x_idx;
 
+                    mask_asic = mask_image[y_min:y_max,x_min:x_max]
                     # Get some statistics on the ASIC
                     
                     in_range_array = np.where(np.logical_and(np.greater_equal(curr_asic, self.histBinStart),np.less_equal(curr_asic,self.histBinEnd)), curr_asic, [np.nan]).flatten()
@@ -540,70 +549,77 @@ class PADStack:
                             hist_file.close()
                         
 
-                    #print(len(curr_peaks))
-                    ENABLE_QUADRATIC = 1;
-                    if (len(curr_peaks)>=2):
-                        zero_peak = 0.5*(bin_edge[curr_peaks[0]]+bin_edge[curr_peaks[0]+1])
-                        debounce_msg = ""
-                        if (zero_peak >= self.fpBound[0]) and (zero_peak <= self.fpBound[1]):
-                            curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] = curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] - zero_peak
-                            debounce_amount = zero_peak
-                            debounce_reason = "Applied Topo"
-                        else:
-                            debounce_amount = zero_peak
-                            debounce_reason = "Topo out of range"
-                    elif (len(curr_peaks)==1):
-                        peak_width, width_heights, left_ips, right_ips = scipy.signal.peak_widths(curr_hist, curr_peaks);
-                        #print(peak_width)
-                        left_idx = math.floor(left_ips[0])
-                        right_idx = math.ceil(right_ips[0])
-                        print(curr_peaks)
-                        x_centers = 0.5 *(bin_edge[left_idx:right_idx]+bin_edge[(left_idx+1):(right_idx+1)]);
-                        ##print(x_centers)
-                        quad_fit_ret = scipy.optimize.curve_fit(quadratic, x_centers, curr_hist[left_idx:right_idx], [-1,20,400])
-                        quad_coeff = quad_fit_ret[0]
-                        debounce_msg = quad_coeff
-                        #print(quad_fit_ret)
-                        zero_peak = vertex_pos(*quad_coeff);
-                        debounce_amount = zero_peak
-                        ## XXX FIXME OVERRIDE
-                        #if (asic_idx == 11):
-                        #    print("Raw peak amount: {}".format(zero_peak))
-                        #debounce_amount = 0
-                        #zero_peak = 0
-
-                        # Time to try fitting two peaks under certain conditions
-                        COMPUTE_TWOPEAK = 1 # Eventually put make an intelligent decision
-                        if COMPUTE_TWOPEAK:
-                            raw_data = np.concatenate([np.full((count,),midpoint) for count, midpoint in zip(curr_hist, 0.5*(bin_edge[0:-1]+bin_edge[1:]))])
-                            asic_skew = scipy.stats.skew(raw_data)
-                            print("Skew: {}".format(asic_skew))
-                            if asic_skew > 0.45:
-                                
-                                fitter = GaussFit2Readnoise()
-                                initial_guess = [curr_hist[curr_peaks[0]], bin_edge[curr_peaks[0]], 0.5*curr_hist[curr_peaks[0]], bin_edge[curr_peaks[0]]+40, fitter.readnoise, 0]
-                                print(initial_guess)
-                                fit_found = True
-                                try:
-                                    two_fit_ret = scipy.optimize.curve_fit(fitter.computeDist, x_centers, curr_hist[left_idx:right_idx], initial_guess)
-                                except Exception as e:
-                                    fit_found = False # Assume the error is failing to converge
-                                
-                                print("Old Zero Peak: {}".format(zero_peak))
-                                if fit_found:
-                                    zero_peak = two_fit_ret[0][1]
-                                    print("New Zero Peak: {}".format(zero_peak))
-                                                       
-                        print(zero_peak)
-                        if (zero_peak >= self.fpBound[0]) and (zero_peak <= self.fpBound[1]):
-                            curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] = curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] - zero_peak
-                            debounce_reason = "Adaptive quadratic"
-                        else:
-                            debounce_reason = "Adaptive quadratic out of range"
+                    # If a mask is defined, we use the mask as the determinant of bounce amound
+                    if use_maskfile:
+                        sel_pixels = np.extract(np.not_equal(0, mask_asic), curr_asic)
+                        debounce_amount = np.nanmedian(sel_pixels)
+                        curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] = curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] - debounce_amount
+                        debounce_reason = "Masked selection"
                     else:
-                        debounce_amount = 0
-                        debounce_reason = "No peaks found"
-                        deboucne_msg = ""
+                        #print(len(curr_peaks))
+                        ENABLE_QUADRATIC = 1;
+                        if (len(curr_peaks)>=2):
+                            zero_peak = 0.5*(bin_edge[curr_peaks[0]]+bin_edge[curr_peaks[0]+1])
+                            debounce_msg = ""
+                            if (zero_peak >= self.fpBound[0]) and (zero_peak <= self.fpBound[1]):
+                                curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] = curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] - zero_peak
+                                debounce_amount = zero_peak
+                                debounce_reason = "Applied Topo"
+                            else:
+                                debounce_amount = zero_peak
+                                debounce_reason = "Topo out of range"
+                        elif (len(curr_peaks)==1):
+                            peak_width, width_heights, left_ips, right_ips = scipy.signal.peak_widths(curr_hist, curr_peaks);
+                            #print(peak_width)
+                            left_idx = math.floor(left_ips[0])
+                            right_idx = math.ceil(right_ips[0])
+                            print(curr_peaks)
+                            x_centers = 0.5 *(bin_edge[left_idx:right_idx]+bin_edge[(left_idx+1):(right_idx+1)]);
+                            ##print(x_centers)
+                            quad_fit_ret = scipy.optimize.curve_fit(quadratic, x_centers, curr_hist[left_idx:right_idx], [-1,20,400])
+                            quad_coeff = quad_fit_ret[0]
+                            debounce_msg = quad_coeff
+                            #print(quad_fit_ret)
+                            zero_peak = vertex_pos(*quad_coeff);
+                            debounce_amount = zero_peak
+                            ## XXX FIXME OVERRIDE
+                            #if (asic_idx == 11):
+                            #    print("Raw peak amount: {}".format(zero_peak))
+                            #debounce_amount = 0
+                            #zero_peak = 0
+
+                            # Time to try fitting two peaks under certain conditions
+                            COMPUTE_TWOPEAK = 1 # Eventually put make an intelligent decision
+                            if COMPUTE_TWOPEAK:
+                                raw_data = np.concatenate([np.full((count,),midpoint) for count, midpoint in zip(curr_hist, 0.5*(bin_edge[0:-1]+bin_edge[1:]))])
+                                asic_skew = scipy.stats.skew(raw_data)
+                                print("Skew: {}".format(asic_skew))
+                                if asic_skew > 0.45:
+                                
+                                    fitter = GaussFit2Readnoise()
+                                    initial_guess = [curr_hist[curr_peaks[0]], bin_edge[curr_peaks[0]], 0.5*curr_hist[curr_peaks[0]], bin_edge[curr_peaks[0]]+40, fitter.readnoise, 0]
+                                    print(initial_guess)
+                                    fit_found = True
+                                    try:
+                                        two_fit_ret = scipy.optimize.curve_fit(fitter.computeDist, x_centers, curr_hist[left_idx:right_idx], initial_guess)
+                                    except Exception as e:
+                                        fit_found = False # Assume the error is failing to converge
+                                    
+                                    print("Old Zero Peak: {}".format(zero_peak))
+                                    if fit_found:
+                                        zero_peak = two_fit_ret[0][1]
+                                        print("New Zero Peak: {}".format(zero_peak))
+                                    
+                                print(zero_peak)
+                                if (zero_peak >= self.fpBound[0]) and (zero_peak <= self.fpBound[1]):
+                                    curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] = curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] - zero_peak
+                                    debounce_reason = "Adaptive quadratic"
+                                else:
+                                    debounce_reason = "Adaptive quadratic out of range"
+                            else:
+                                debounce_amount = 0
+                                debounce_reason = "No peaks found"
+                                deboucne_msg = ""
                     self.debounce_log.append([frame_idx, asic_idx, debounce_amount, debounce_reason, debounce_msg])        
             self.imgStack[frame_idx] = curr_frame
             
