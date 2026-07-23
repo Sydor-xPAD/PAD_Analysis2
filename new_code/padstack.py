@@ -9,12 +9,12 @@ import h5py
 import math
 
 class GaussFit2Readnoise:
-    def init(self):
+    def __init__(self):
         self.readnoise = 10
         
     def computeGaussian(self, x, sigma, mu):
         g_var = sigma*sigma     # Gaussian variance
-        result = 1/(math.sqrt(2*math.pi*g_var))*math.exp(-math.pow(x-mu0,2.0)/(2*g_var))
+        result = 1/(np.sqrt(2*math.pi*g_var))*np.exp(-np.pow(x-mu,2.0)/(2*g_var))
         return result
     def computeDist(self, x, scale_readnoise, mean_readnoise, scale2, mean2, sigma2, dc):
         readnoise_var = self.readnoise*self.readnoise # Sigma Squared
@@ -487,7 +487,7 @@ class PADStack:
                
         for frame_idx in range(numImages):
             curr_frame = self.imgStack[frame_idx]
-            ADJUST_RANGE = 1
+            ADJUST_RANGE = 0
             if ADJUST_RANGE != 0:
                 sample_region = curr_frame[208:240,401:494].flatten()
                 adj_factor = np.nanmedian(sample_region)
@@ -557,7 +557,7 @@ class PADStack:
                         #print(peak_width)
                         left_idx = math.floor(left_ips[0])
                         right_idx = math.ceil(right_ips[0])
-                        
+                        print(curr_peaks)
                         x_centers = 0.5 *(bin_edge[left_idx:right_idx]+bin_edge[(left_idx+1):(right_idx+1)]);
                         ##print(x_centers)
                         quad_fit_ret = scipy.optimize.curve_fit(quadratic, x_centers, curr_hist[left_idx:right_idx], [-1,20,400])
@@ -567,10 +567,34 @@ class PADStack:
                         zero_peak = vertex_pos(*quad_coeff);
                         debounce_amount = zero_peak
                         ## XXX FIXME OVERRIDE
-                        if (asic_idx == 11):
-                            print("Raw peak amount: {}".format(zero_peak))
-                        debounce_amount = 0
-                        zero_peak = 0
+                        #if (asic_idx == 11):
+                        #    print("Raw peak amount: {}".format(zero_peak))
+                        #debounce_amount = 0
+                        #zero_peak = 0
+
+                        # Time to try fitting two peaks under certain conditions
+                        COMPUTE_TWOPEAK = 1 # Eventually put make an intelligent decision
+                        if COMPUTE_TWOPEAK:
+                            raw_data = np.concatenate([np.full((count,),midpoint) for count, midpoint in zip(curr_hist, 0.5*(bin_edge[0:-1]+bin_edge[1:]))])
+                            asic_skew = scipy.stats.skew(raw_data)
+                            print("Skew: {}".format(asic_skew))
+                            if asic_skew > 0.45:
+                                
+                                fitter = GaussFit2Readnoise()
+                                initial_guess = [curr_hist[curr_peaks[0]], bin_edge[curr_peaks[0]], 0.5*curr_hist[curr_peaks[0]], bin_edge[curr_peaks[0]]+40, fitter.readnoise, 0]
+                                print(initial_guess)
+                                fit_found = True
+                                try:
+                                    two_fit_ret = scipy.optimize.curve_fit(fitter.computeDist, x_centers, curr_hist[left_idx:right_idx], initial_guess)
+                                except Exception as e:
+                                    fit_found = False # Assume the error is failing to converge
+                                
+                                print("Old Zero Peak: {}".format(zero_peak))
+                                if fit_found:
+                                    zero_peak = two_fit_ret[0][1]
+                                    print("New Zero Peak: {}".format(zero_peak))
+                                                       
+                        print(zero_peak)
                         if (zero_peak >= self.fpBound[0]) and (zero_peak <= self.fpBound[1]):
                             curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] = curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] - zero_peak
                             debounce_reason = "Adaptive quadratic"
