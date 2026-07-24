@@ -517,7 +517,9 @@ class PADStack:
                     curr_asic = curr_frame[y_min:y_max,x_min:x_max]
                     asic_idx = y_idx*asic_x_count+x_idx;
 
-                    mask_asic = mask_image[y_min:y_max,x_min:x_max]
+                    full_asic = curr_frame[asic_y_min:asic_y_max, asic_x_min:asic_x_max]
+
+                    mask_asic = mask_image[asic_y_min:asic_y_max,asic_x_min:asic_x_max]
                     # Get some statistics on the ASIC
                     
                     in_range_array = np.where(np.logical_and(np.greater_equal(curr_asic, self.histBinStart),np.less_equal(curr_asic,self.histBinEnd)), curr_asic, [np.nan]).flatten()
@@ -551,7 +553,7 @@ class PADStack:
 
                     # If a mask is defined, we use the mask as the determinant of bounce amound
                     if use_maskfile:
-                        sel_pixels = np.extract(np.not_equal(0, mask_asic), curr_asic)
+                        sel_pixels = np.extract(np.not_equal(0, mask_asic), full_asic)
                         debounce_amount = np.nanmedian(sel_pixels)
                         curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] = curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] - debounce_amount
                         debounce_reason = "Masked selection"
