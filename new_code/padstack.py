@@ -25,6 +25,21 @@ class GaussFit2Readnoise:
         gauss_2 = scale2*self.computeGaussian(x, peak_2_var, mean2)
         return (gauss_readnoise+gauss_2+dc)
         
+class GaussFit2:
+    def __init__(self):
+        self.readnoise = 10
+        
+    def computeGaussian(self, x, sigma, mu):
+        g_var = sigma*sigma     # Gaussian variance
+        result = 1/(np.sqrt(2*math.pi*g_var))*np.exp(-np.pow(x-mu,2.0)/(2*g_var))
+        return result
+    def computeDist(self, x, scale_readnoise, sigma_readnoise, mean_readnoise, scale2, sigma2, mean2, dc):
+        readnoise_var = sigma_readnoise*sigma_readnoise # Sigma Squared
+        peak_2_var = sigma2*sigma2
+
+        gauss_readnoise = math.fabs(scale_readnoise) * self.computeGaussian(x, sigma_readnoise, mean_readnoise)
+        gauss_2 = math.fabs(scale2)*self.computeGaussian(x, sigma2, mean2)
+        return (gauss_readnoise+gauss_2+dc)
         
 
 class PADSM:
@@ -43,7 +58,6 @@ def vertex_pos(a, b, c):
     center = -b/(2*a);          # The roots are spaced evenly around -b/(2a), so don't need discriminant
     return center
 
-    
     
 def bilinear_interp(img, src_y, src_x):
     jy = int(math.floor(src_y))
@@ -161,11 +175,90 @@ def sm_expand(sm_img):
     out_sm[:,131] = sm_img[:,128]*0.4
     return out_sm
 
+def calc_bin_num(x, data_range, num_bins):
+    frac = (x-data_range[0])/(data_range[1]-data_range[0])
+    bin_num = num_bins*frac
+    if frac >= 1:
+        bin_num = num_bins - 1
+
+    if (bin_num >= num_bins):
+        print("Bin Num Debugging.")
+        print(bin_num)
+        print("frac: {}".format(frac))
+        print("Range: {}".format(data_range))
+        print("x: {}".format(x))
+    return bin_num
+
+def angle_in_bounds(angle, bounds):
+    if (bounds[0] < bounds[1]):
+        if (angle >= bounds[0]) and (angle <= bounds[1]):
+            return True
+        else:
+            return False
+    if (bounds[1] > bounds[0]):
+        if (angle >= bounds[0]) or (angle <= bounds[1]):
+            return True
+        else:
+            return False
+    return False
+
+def radial_intensity(img, center, num_bins, abounds = (0, 2*math.pi)):
+    r_max = -math.inf
+    r_min = math.inf
+
+    
+    for y_idx in range(img.shape[0]):
+        y_ctr = y_idx + 0.5
+        for x_idx in range(img.shape[1]):
+            x_ctr = x_idx + 0.5
+            curr_angle = math.atan2(y_ctr-center[0],x_ctr-center[1])+math.pi
+            if not angle_in_bounds(curr_angle, abounds):
+                continue
+            curr_dist = math.sqrt((x_ctr-center[1])**2+(y_ctr-center[0])**2)
+            if curr_dist < r_min:
+                r_min = curr_dist
+            if curr_dist > r_max:
+                r_max = curr_dist
+
+    r_min = math.floor(r_min)
+    r_max = math.ceil(r_max)
+
+    if r_min == r_max:
+        print("Radius out of range.")
+        return None
+
+    bin_edges = np.linspace(r_min, r_max, num_bins+1)
+    total_signal = np.zeros(num_bins)
+    num_counts = np.zeros(num_bins)
+    
+    for y_idx in range(img.shape[0]):
+        y_ctr = y_idx + 0.5
+        for x_idx in range(img.shape[1]):
+            x_ctr = x_idx + 0.5
+            curr_angle = math.atan2(-(y_ctr-center[0]),x_ctr-center[1])
+            if curr_angle < 0:
+                curr_angle += 2*math.pi
+            if not angle_in_bounds(curr_angle, abounds):
+                continue
+            if not math.isfinite(img[y_idx, x_idx]):
+                continue
+            curr_dist = math.sqrt((x_ctr-center[1])**2+(y_ctr-center[0])**2)
+            dest_bin = int(calc_bin_num(curr_dist, (r_min, r_max), num_bins))
+            total_signal[dest_bin] += img[y_idx, x_idx]
+            num_counts[dest_bin] += 1
+
+
+    return (bin_edges, total_signal, num_counts)
+
+    
+    
+
 class PADStack:
     SP_TYPE_NONE = 0;
     SP_TYPE_BG = 1;
     SP_TYPE_FF = 2;             # We may have special types for some operations
     SP_TYPE_DEFECT = 3;
+    SP_TYPE_SINGLEMASK = 4;
     
     def __init__(self, oldPADStack):
         self.numImages = oldPADStack.numImages;
@@ -205,6 +298,8 @@ class PADStack:
             self.loadFF(xpad_file, xpad_type)
         elif (file_type == 'DEFECT'):
             self.loadDefect(xpad_file, xpad_type)
+        elif (file_type == 'SINGLEMASK'):
+            self.loadSingleMask(xpad_file, xpad_type)
         elif (file_type == 'HDF'):
             self.loadHDF(xpad_file)
         
@@ -575,7 +670,7 @@ class PADStack:
                             #print(peak_width)
                             left_idx = math.floor(left_ips[0])
                             right_idx = math.ceil(right_ips[0])
-                            print(curr_peaks)
+                            #print(curr_peaks)
                             x_centers = 0.5 *(bin_edge[left_idx:right_idx]+bin_edge[(left_idx+1):(right_idx+1)]);
                             ##print(x_centers)
                             quad_fit_ret = scipy.optimize.curve_fit(quadratic, x_centers, curr_hist[left_idx:right_idx], [-1,20,400])
@@ -595,33 +690,52 @@ class PADStack:
                             if COMPUTE_TWOPEAK:
                                 raw_data = np.concatenate([np.full((count,),midpoint) for count, midpoint in zip(curr_hist, 0.5*(bin_edge[0:-1]+bin_edge[1:]))])
                                 asic_skew = scipy.stats.skew(raw_data)
-                                print("Skew: {}".format(asic_skew))
-                                if asic_skew > 0.45:
+                                #print("Skew: {}".format(asic_skew))
+                                if True or asic_skew > 0.45:
                                 
-                                    fitter = GaussFit2Readnoise()
-                                    initial_guess = [curr_hist[curr_peaks[0]], bin_edge[curr_peaks[0]], 0.5*curr_hist[curr_peaks[0]], bin_edge[curr_peaks[0]]+40, fitter.readnoise, 0]
+                                    fitter = GaussFit2()
+                                    peak_height = curr_hist[curr_peaks[0]]
+                                    readnoise = 14.0
+                                    peak_scale = peak_height*math.sqrt(2*math.pi*readnoise**2)
+                                    #initial_guess = [curr_hist[curr_peaks[0]], 14.0, zero_peak, curr_hist[curr_peaks[0]], 14.0, zero_peak+60, 0]
+                                    initial_guess = [peak_scale, readnoise, zero_peak, peak_scale/2.0, readnoise, zero_peak+40, 0]
+                                    print("ASIC: {}".format(asic_idx))
                                     print(initial_guess)
                                     fit_found = True
                                     try:
-                                        two_fit_ret = scipy.optimize.curve_fit(fitter.computeDist, x_centers, curr_hist[left_idx:right_idx], initial_guess)
+                                        print("Trying two-peak fit.")
+                                        two_fit_ret = scipy.optimize.curve_fit(fitter.computeDist, 0.5*(bin_edge[0:-1]+bin_edge[1:]), curr_hist, initial_guess, method='dogbox')
                                     except Exception as e:
                                         fit_found = False # Assume the error is failing to converge
                                     
                                     print("Old Zero Peak: {}".format(zero_peak))
                                     if fit_found:
-                                        zero_peak = two_fit_ret[0][1]
+                                        peak_1 = two_fit_ret[0][2]
+                                        peak_2 = two_fit_ret[0][5]
+                                        temp_peak = peak_1
+                                        if peak_1 < peak_2:
+                                            temp_peak = peak_1
+                                        else:
+                                            temp_peak = peak_2
+
+                                        # Make sure the new peak is roughly in range
+                                        ## Below 15 could be a function of photon energy
+                                        if math.fabs(temp_peak-zero_peak) < 15:
+                                            zero_peak = temp_peak
+                                        
+                                            
                                         print("New Zero Peak: {}".format(zero_peak))
                                     
-                                print(zero_peak)
-                                if (zero_peak >= self.fpBound[0]) and (zero_peak <= self.fpBound[1]):
-                                    curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] = curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] - zero_peak
-                                    debounce_reason = "Adaptive quadratic"
-                                else:
-                                    debounce_reason = "Adaptive quadratic out of range"
+                            #print(zero_peak)
+                            if (zero_peak >= self.fpBound[0]) and (zero_peak <= self.fpBound[1]):
+                                curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] = curr_frame[asic_y_min:asic_y_max,asic_x_min:asic_x_max] - zero_peak
+                                debounce_reason = "Adaptive quadratic"
                             else:
-                                debounce_amount = 0
-                                debounce_reason = "No peaks found"
-                                deboucne_msg = ""
+                                debounce_reason = "Adaptive quadratic out of range"
+                        else:
+                            debounce_amount = 0
+                            debounce_reason = "No peaks found"
+                            deboucne_msg = ""
                     self.debounce_log.append([frame_idx, asic_idx, debounce_amount, debounce_reason, debounce_msg])        
             self.imgStack[frame_idx] = curr_frame
             
@@ -640,7 +754,50 @@ class PADStack:
             self.imgStack[frame_idx] = self.imgStack[frame_idx]+defectImg.imgStack[self.capIndex[cap_num]]
 
         return
-                            
+
+    def loadSingleMask(self, mask_file, imgType):
+        if imgType == 'KECK':
+            self.numImages = 1
+            self.imgSize = (512,512)
+        elif imgType == 'MMPAD':
+            self.numImages = 1
+            self.imgSize = (512,512)
+        elif imgType == 'KECKPADX2':
+            self.imgSize = (512,1024)
+            self.numImages = 1
+        else:
+            print("Error: invalid type {} creating defect map.".format(imgType))
+            
+            return              # Not a supported type
+
+        temp_raster = imageio.imread(mask_file)
+        if temp_raster.shape != self.imgSize:
+            print("Error: invalid mask size {}; should be {}.".format(temp_raster.shape, self.imgSize))
+            return
+
+        # Create the array for the mask
+        self.imgStack = []
+        curr_frame = np.zeros(self.imgSize, dtype=np.double) # Doubles let us NaN, which allows for adding the defect map to an image
+        self.imgStack.append(curr_frame)
+
+        for row_idx in range(self.imgSize[0]):
+            for col_idx in range(self.imgSize[1]):
+                if temp_raster[row_idx,col_idx] != 0:
+                    self.imgStack[0][row_idx,col_idx] += np.nan # Make it NaN for use later
+
+        self.spType = self.SP_TYPE_SINGLEMASK
+        return
+
+    def augmentMask(self, singlemaskImg):
+        if singlemaskImg.spType != self.SP_TYPE_SINGLEMASK:
+            print("Invalid single-mask image.")
+            return
+
+        for imgIdx in range(self.numImages):
+            self.imgStack[imgIdx] = self.imgStack[imgIdx] + singlemaskImg.imgStack[0] # The mask images are either 0 or NaN, thereby either not changing pixels or masking them out
+
+        return
+    
     def loadDefect(self, xpad_file, imgType):
         
         if imgType == 'KECK':

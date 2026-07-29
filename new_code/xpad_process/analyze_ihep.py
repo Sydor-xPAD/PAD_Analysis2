@@ -5,6 +5,7 @@ import inspect
 import matplotlib.pyplot as plt
 import matplotlib
 import scipy
+import math
 
 currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 parentdir = os.path.dirname(currentdir)
@@ -36,6 +37,9 @@ bg_img = padstack.PADStack("ihep_raw/run-s175_h2o-50us-backg-new/frames/s175_h2o
 #fg_img_ndb = padstack.PADStack("ihep_raw/run-ni#3-danjing-dynamic-2-20us/frames/ni#3-danjing-dynamic-2-20us_00000001.raw", "KECKPADX2");
 #bg_img = padstack.PADStack("ihep_raw/run-background-20us/frames/background-20us_00000001.raw", "KECKPADX2");
 
+flat_image = padstack.PADStack("ihep_config/etc/xPAD00015/flatfield.raw", "KECKPADX2", "FF")
+
+happyimg = padstack.PADStack("happymask.pgm", "KECKPADX2", "SINGLEMASK")
 
 ## This prints out some statistics
 print("fg: images: {}, caps {},size {}".format(fg_img.numImages, fg_img.numCaps, fg_img.imgStack[0].shape))
@@ -50,7 +54,7 @@ print("bg: images: {}, caps {},size {}".format(bg_img.numImages, bg_img.numCaps,
 
 bg_img.computeBgStack(2);
 
-bg_img.saveImg("back_ihep.hdf5")
+#bg_img.saveImg("back_ihep.hdf5")
 
 ## Print statistics on the computed background image
 print("bg: images: {}, caps {},size {}".format(bg_img.numImages, bg_img.numCaps, bg_img.imgStack[0].shape))
@@ -59,13 +63,22 @@ print("bg: images: {}, caps {},size {}".format(bg_img.numImages, bg_img.numCaps,
 fg_img.bgSub(bg_img);
 fg_img_ndb.bgSub(bg_img)
 
-fg_img.saveImg("bgsub_ihep.hdf5")
+#fg_img.saveImg("bgsub_ihep.hdf5")
 
 ## Perform a debounce.  For this instance, the number of bins in the histogram
 ## used for the debounce is altered.  The histogram limits are in fg_img.histBinStart and fg_img.histBinEnd, defaulting to (-200,800).  1000 bins makes each bin 1 ADU wide, versus the default of 200 bins for 5 ADU bin width.
-fg_img.numBins=200
+fg_img.histBinStart = -100
+fg_img.histBinEnd = 200
+fg_img.numBins = 75
+#fg_img.numBins=200
 fg_img.fpBound=(-75,75)
-fg_img.apply_debounce(MaskFilename="s175_mask.pgm");
+#fg_img.apply_debounce(MaskFilename="s175_mask.pgm");
+fg_img.apply_debounce();
+
+## Do the flatfield correction
+#fg_img.applyFF(flat_image) 
+
+# fg_img.augmentMask(happyimg);
 
 ## Threading without the global interpreter lock has been implemented.
 ## This performs a print showing the if GIL has been re-enabled.  These lines
@@ -77,22 +90,36 @@ print(sys._is_gil_enabled()
 ## even if the GIL is enabled.  The argument is the location of the geocal
 ## file.  There must be no comments in the file, and the submodules must be
 ## in order from 0 on up.
-#fg_img.geocorr_truethread_kega("ihep_gc.cfg")
-#fg_img_ndb.geocorr_truethread_kega("ihep_gc.cfg")
+fg_img.geocorr_truethread_kega("ihep_gc.cfg")
+fg_img_ndb.geocorr_truethread_kega("ihep_gc.cfg")
 
 ## Here we save the image as a series of double rasters in a raw binary format.
-out_file = open("ihep_data.img", "wb");
+#out_file = open("ihep_data.img", "wb");
 
-for image_frame in fg_img.imgStack:
-    image_frame.tofile(out_file)
+#for image_frame in fg_img.imgStack:
+#    image_frame.tofile(out_file)
 
-out_file.close()
+#out_file.close()
 
 ## Save the image and metadata in an HDF5 file.  The image raster is in dataset
 ## `image`
 fg_img.saveImgKega("s175mask_data.hdf5")
 fg_img_ndb.saveImgKega("s175mask_ndb_data.hdf5")
 bg_img.saveImgKega("s175mask_bg.hdf5")
+
+## Now try a radial intensity
+
+radial_center = (579,520)
+
+bin_edges, sig_tot, num_counts = padstack.radial_intensity(fg_img.imgStack[1], radial_center, 400, (25.0*math.pi/180.0, 51.0*math.pi/180.0))
+
+print(bin_edges.shape)
+print(sig_tot.shape)
+
+fig, ax = plt.subplots()
+ax.stairs(sig_tot, bin_edges)
+plt.savefig('raps.png')
+plt.close(fig)
 
 sys.exit(0)
 
