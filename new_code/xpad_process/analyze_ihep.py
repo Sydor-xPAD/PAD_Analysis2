@@ -17,7 +17,7 @@ import padstack
 ## files can be concatenated into one big file.
 ## PADStack has a third argument of `file_type`, which by default is
 ## 'IMG' to load a PAD image file.  Other options are 'FF' for a flatfield
-## file and 'DEFECT' to load and combine a pair of hot and dark masks.
+## file, 'DEFECT' to load and combine a pair of hot and dark masks, and 'SINGLEMASK' to load a mask that should be applied to all images, versus the per-cap and paired nature of 'DEFECT'
 
 #fg_img = padstack.PADStack("ihep_raw/run-TiZaNbTa-30us/frames/TiZaNbTa-30us_00000001.raw", "KECKPADX2");
 #fg_img_ndb = padstack.PADStack("ihep_raw/run-TiZaNbTa-30us/frames/TiZaNbTa-30us_00000001.raw", "KECKPADX2");
@@ -76,7 +76,7 @@ fg_img.fpBound=(-75,75)
 fg_img.apply_debounce();
 
 ## Do the flatfield correction
-#fg_img.applyFF(flat_image) 
+fg_img.applyFF(flat_image) 
 
 # fg_img.augmentMask(happyimg);
 
@@ -121,6 +121,21 @@ ax.stairs(sig_tot, bin_edges)
 plt.savefig('raps.png')
 plt.close(fig)
 
+bin_edges, sig_tot, num_counts = padstack.angular_intensity(fg_img.imgStack[1], radial_center, 800, abounds=(25.0*math.pi/180.0, 51.0*math.pi/180.0), det_dist=25000)
+
+print(bin_edges.shape)
+print(sig_tot.shape)
+
+fig, ax = plt.subplots()
+ax.stairs(sig_tot, bin_edges)
+ax.set_ylim(0,1000)
+plt.savefig('aaps.png')
+plt.close(fig)
+
+fig, ax = plt.subplots()
+ax.stairs(sig_tot/num_counts, bin_edges,)
+plt.savefig('aaps_mean.png')
+plt.close(fig)
 sys.exit(0)
 
 entry_idx = -1

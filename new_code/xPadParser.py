@@ -17,12 +17,24 @@ import xpad_utils as xutil
 PRINT_METADATA = 1
 #
 
- 
 class Metadata:
-    __slots__ = ["frameParms", "lengthParms", "frameMeta", "capNum", "frameNum",
+    def __init__(self):
+        pass
+
+    def getProperties(self):
+        retDict = {}
+        for slot in self.slots:
+            retDict[slot] = self.__dict__[slot]
+
+        return retDict
+
+ 
+class MetadataKeck(Metadata):
+    ## NOTE WELL: This is not the special __slots__ property, but one that indicates what is found in here, for iteration with .__dict__[x] for x in self.slots
+    slots = ["frameParms", "lengthParms", "frameMeta", "capNum", "frameNum",
                  "integTime", "interTime", 
                  "v_iss_buf_pix", "v_iss_ab", "v_mon_out", "v_iss_buf",
-                 "vdda_current", "vdda_volts", "sensorTemp" ]
+                 "vdda_current", "vdda_volts", "sensorTemp", "v_low_asic0", "v_low_asic1" ]
     def __init__(self, fp,  lp,  fm, cn, fn, integ, inter, 
                  v_iss_buf_pix, v_iss_ab, v_mon_out,  v_iss_buf, vddaCurrent, vddaVolts, st):
         self.frameParms = fp
@@ -39,6 +51,32 @@ class Metadata:
         self.vdda_current = vddaCurrent
         self.vdda_volts = vddaVolts
         self.sensorTemp = st
+
+
+class MetadataMMPAD(Metadata):
+    ## NOTE WELL: This is not the special __slots__ property, but one that indicates what is found in here, for iteration with .__dict__[x] for x in self.slots
+    slots = ["frameParms", "lengthParms", "frameMeta", "capNum", "frameNum",
+                 "integTime", "interTime", 
+                 "v_iss_buf_pix", "v_iss_ab", "v_mon_out", "v_iss_buf",
+                 "vdda_current", "vdda_volts", "sensorTemp", "v_low_asic0", "v_low_asic1" ]
+    def __init__(self, fp,  lp,  fm, cn, fn, integ, inter, 
+                 v_iss_buf_pix, v_iss_ab, v_mon_out,  v_iss_buf, vddaCurrent, vddaVolts, st, vla0, vla1):
+        self.frameParms = fp
+        self.lengthParms = lp
+        self.frameMeta = fm
+        self.capNum = cn
+        self.frameNum = fn
+        self.integTime = integ
+        self.interTime = inter
+        self.v_iss_buf_pix = v_iss_buf_pix
+        self.v_iss_ab  = v_iss_ab
+        self.v_mon_out = v_mon_out
+        self.v_iss_buf = v_iss_buf
+        self.vdda_current = vddaCurrent
+        self.vdda_volts = vddaVolts
+        self.sensorTemp = st
+        self.v_low_asic0 = vla0
+        self.v_low_asic1 = vla1
 
 
 class KeckFrame:
@@ -137,6 +175,7 @@ class KeckFrame:
         interTime = frameMeta[5]
         #print(capNum)
 
+        #print("Integ, Interframe: {}".format((integTime, interTime)))
         
         dt = self.dtype 
         data = np.fromfile(self.dataFile, count = (lengthParms[1] * lengthParms[2]), dtype = dt)
@@ -171,6 +210,8 @@ class KeckFrame:
         v_iss_ab = []
         v_mon_out = []
         v_iss_buf = []
+        v_low_asic0 = []
+        v_low_asic1 = []
         vdda_current = []
         vdda_voltage = []
         sensor_temp = []
@@ -186,6 +227,8 @@ class KeckFrame:
             v_iss_ab_temp = [footerB[base_idx + 1 + i*24] for i in range(8)]
             v_mon_out_temp = [footerB[base_idx + 2 + i*24] for i in range(8)]
             v_iss_buf_temp = [footerB[base_idx + 3 + i*24] for i in range(8)]
+            v_low_asic0_temp = [footerB[base_idx + 3 + i*24] for i in range(8)]
+            v_low_asic1_temp = [footerB[base_idx + 15 + i*24] for i in range(8)]
             vdda_current_temp = [footerB[base_idx + 4 + i*24] for i in range(8)]
             vdda_voltage_temp = [footerB[base_idx + 5 + i*24] for i in range(8)]
             #sensor_temp_temporary = [footerB[base_idx + 8 + i*24] for i in range(8)]
@@ -194,6 +237,8 @@ class KeckFrame:
             v_iss_ab.extend(v_iss_ab_temp)
             v_mon_out.extend(v_mon_out_temp)
             v_iss_buf.extend(v_iss_buf_temp)
+            v_low_asic0.extend(v_low_asic0_temp)
+            v_low_asic1.extend(v_low_asic1_temp)
             vdda_current.extend(vdda_current_temp)
             vdda_voltage.extend(vdda_voltage_temp)
             sensor_temp.extend(sensor_temp_temporary)
@@ -204,6 +249,8 @@ class KeckFrame:
         cv_iss_ab      = [ xutil.convertSensorCurrent( x ) for x in v_iss_ab  ]
         cv_mon_out     = [ xutil.convertSensorVoltage( x ) for x in v_mon_out  ]
         cv_iss_buf     = [ xutil.convertSensorVoltage( x ) for x in v_iss_buf  ]
+        cv_low_asic0   = [ xutil.convertSensorVoltage( x ) for x in v_low_asic0]
+        cv_low_asic1   = [ xutil.convertSensorVoltage( x ) for x in v_low_asic1]
         cvdda_current  = [ xutil.convertSensorCurrent( x ) for x in vdda_current  ]
         cvdda_volts    = [ xutil.convertSensorVoltage( x ) for x in vdda_voltage  ]
         csensor_temp   = [ xutil.convertSensorTemp( x )    for x in sensor_temp  ]
@@ -211,25 +258,33 @@ class KeckFrame:
         if PRINT_METADATA:
             # Create a new list of formatted strings with 4 digits of precision
             temp = [ "{:10.4f}".format(x) for x in cv_iss_buf_pix ]; 
-            print(f"iss_buf_pix {', '.join( temp )}" )
+            #print(f"iss_buf_pix {', '.join( temp )}" )
             temp = [ "{:10.4f}".format(x) for x in cv_iss_ab ];      
-            print(f"iss_ab      {', '.join( temp )}" )
+            #print(f"iss_ab      {', '.join( temp )}" )
             temp = [ "{:10.4f}".format(x) for x in cv_mon_out ];     
-            print(f"mon_out     {', '.join( temp )}" )
+            #print(f"mon_out     {', '.join( temp )}" )
             temp = [ "{:10.4f}".format(x) for x in cv_iss_buf ];     
-            print(f"iss_buf     {', '.join( temp )}" )
+            #print(f"iss_buf     {', '.join( temp )}" )
             temp = [ "{:10.4f}".format(x) for x in cvdda_current ];  
-            print(f"vdda_curr   {', '.join( temp )}" )
+            #print(f"vdda_curr   {', '.join( temp )}" )
             temp = [ "{:10.4f}".format(x) for x in cvdda_volts ];    
-            print(f"vdda_V      {', '.join( temp )}" )
+            #print(f"vdda_V      {', '.join( temp )}" )
             temp = [ "{:10.4f}".format(x) for x in csensor_temp ];   
-            print(f"Temper.     {', '.join( temp )}" )
+            #print(f"Temper.     {', '.join( temp )}" )
 
 
-        metadata= Metadata(frameParms, lengthParms, frameMeta, capNum, 
-                    frameNum, integTime, interTime, 
-                    cv_iss_buf_pix, cv_iss_ab, cv_mon_out, cv_iss_buf, cvdda_current, 
-                    cvdda_volts, csensor_temp )
+        metadata = 1
+        if self.imgType == 'KECKPAD' or self.imgType == 'KECKPADx2':
+            metadata= MetadataKeck(frameParms, lengthParms, frameMeta, capNum, 
+                               frameNum, integTime, interTime, 
+                               cv_iss_buf_pix, cv_iss_ab, cv_mon_out, cv_iss_buf, cvdda_current, 
+                               cvdda_volts, csensor_temp )
+        else:
+            metadata= MetadataMMPAD(frameParms, lengthParms, frameMeta, capNum,
+                                    frameNum, integTime, interTime,
+                                    cv_iss_buf_pix, cv_iss_ab, cv_mon_out, cv_iss_buf, 
+                                    cvdda_current,
+                                    cvdda_volts, csensor_temp, cv_low_asic0, cv_low_asic1)
 
 
         # return a Tuple of metadata structure and the Array Data             

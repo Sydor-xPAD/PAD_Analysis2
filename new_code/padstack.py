@@ -250,7 +250,70 @@ def radial_intensity(img, center, num_bins, abounds = (0, 2*math.pi)):
 
     return (bin_edges, total_signal, num_counts)
 
+
+def angular_intensity(img, center, num_bins, det_dist = 1000.0, abounds = (0, 2*math.pi), pixel_pitch = (150.0, 150.0)):
+    t_max = -math.inf
+    t_min = math.inf
+
+    ## Pixel pitch is width, height
     
+    for y_idx in range(img.shape[0]):
+        y_ctr = y_idx + 0.5
+        y_offset = -(y_ctr-center[0])
+        y_dist = y_offset*pixel_pitch[1]
+            
+        for x_idx in range(img.shape[1]):
+            x_ctr = x_idx + 0.5
+            x_offset = x_ctr - center[1]
+            x_dist = x_offset*pixel_pitch[0]
+            curr_angle = math.atan2(-y_dist,x_dist)
+            if (curr_angle < 0):
+                curr_angle = curr_angle + 2*math.pi
+            if not angle_in_bounds(curr_angle, abounds):
+                continue
+            curr_dist = math.sqrt(x_dist**2+y_dist**2)
+            curr_theta = math.atan(curr_dist/det_dist)
+            if curr_theta < t_min:
+                t_min = curr_theta
+            if curr_theta > t_max:
+                t_max = curr_theta
+
+    t_min = math.floor(t_min)
+    t_max = math.ceil(t_max)
+
+    if t_min == t_max:
+        print("Angle out of range.")
+        return None
+
+    bin_edges = np.linspace(t_min, t_max, num_bins+1)
+    total_signal = np.zeros(num_bins)
+    num_counts = np.zeros(num_bins)
+    
+    for y_idx in range(img.shape[0]):
+        y_ctr = y_idx + 0.5
+        y_offset = -(y_ctr-center[0])
+        y_dist = y_offset*pixel_pitch[1]
+        
+        for x_idx in range(img.shape[1]):
+            x_ctr = x_idx + 0.5
+            x_offset = x_ctr - center[1]
+            x_dist = x_offset*pixel_pitch[0]
+            curr_angle = math.atan2(y_dist, x_dist)
+            if curr_angle < 0:
+                curr_angle += 2*math.pi
+            if not angle_in_bounds(curr_angle, abounds):
+                continue
+            if not math.isfinite(img[y_idx, x_idx]):
+                continue
+            curr_dist = math.sqrt(x_dist**2+y_dist**2)
+            curr_theta = math.atan(curr_dist/det_dist)
+            dest_bin = int(calc_bin_num(curr_theta, (t_min, t_max), num_bins))
+            total_signal[dest_bin] += img[y_idx, x_idx]
+            num_counts[dest_bin] += 1
+
+
+    return (bin_edges, total_signal, num_counts)
+
     
 
 class PADStack:
@@ -455,28 +518,25 @@ class PADStack:
                     for op_idx in range(len(self.op_log)):
                         op_dset[op_idx] = self.op_log[op_idx]
 
+                ## Now we add the metadata, mostly by iterating over the members of the metadata
                 f['/image'].attrs['cap_mask'] = self.capMask
-                integ_dset = f.create_dataset("integration_time", (num_img,), dtype=np.float64)
-                inter_dset = f.create_dataset("interframe_time", (num_img,), dtype=np.float64)
-                capnum_dset = f.create_dataset("cap_num", (num_img,), dtype='i')
-                v_iss_buf_pix_dset = f.create_dataset("v_iss_buf_pix", (num_img, len(self.metaStack[0].v_iss_buf_pix)), dtype=np.float64)
-                v_iss_ab_dset = f.create_dataset("v_iss_ab", (num_img, len(self.metaStack[0].v_iss_ab)), dtype=np.float64)
-                v_mon_out_dset = f.create_dataset("v_mon_out", (num_img, len(self.metaStack[0].v_mon_out)), dtype=np.float64)
-                v_iss_buf_dset = f.create_dataset("v_iss_buf", (num_img, len(self.metaStack[0].v_iss_buf)), dtype=np.float64)
-                vdda_current_dset = f.create_dataset("vdda_current", (num_img, len(self.metaStack[0].vdda_current)), dtype=np.float64)
-                vdda_volts_dset = f.create_dataset("vdda_volts", (num_img, len(self.metaStack[0].vdda_volts)), dtype=np.float64)
-                sensor_temp_dset = f.create_dataset("sensor_temp", (num_img, len(self.metaStack[0].sensorTemp)), dtype=np.float64)
-                for img_idx in range(num_img):
-                    integ_dset[img_idx] = self.metaStack[img_idx].integTime
-                    inter_dset[img_idx] = self.metaStack[img_idx].interTime
-                    capnum_dset[img_idx] = self.metaStack[img_idx].capNum
-                    v_iss_buf_pix_dset[img_idx] = self.metaStack[img_idx].v_iss_buf_pix
-                    v_iss_ab_dset[img_idx] = self.metaStack[img_idx].v_iss_ab
-                    v_mon_out_dset[img_idx] = self.metaStack[img_idx].v_mon_out
-                    v_iss_buf_dset[img_idx] = self.metaStack[img_idx].v_iss_buf
-                    vdda_current_dset[img_idx] = self.metaStack[img_idx].vdda_current
-                    vdda_volts_dset[img_idx] = self.metaStack[img_idx].vdda_volts
-                    sensor_temp_dset[img_idx] = self.metaStack[img_idx].sensorTemp
+
+                for slot in self.metaStack[0].slots: # We checked above for images, so we should also have metadata
+                    curr_dset = 0
+                    if slot == 'integTime':
+                        curr_dset = f.create_dataset(slot, (num_img,), dtype=np.float64)
+                    elif slot == 'interTime':
+                        curr_dset = f.create_dataset(slot, (num_img,), dtype=np.float64)
+                    elif slot == "capNum":
+                        curr_dset = f.create_dataset(slot, (num_img,), dtype='i')
+                    elif slot == "frameNum":
+                        curr_dset = f.create_dataset(slot, (num_img,), dtype='i')
+                    else:
+                        curr_dset = f.create_dataset(slot, (num_img, len(self.metaStack[0].__dict__[slot])), dtype=np.float64)
+                                                     
+                    for img_idx in range(num_img):
+                        curr_dset[img_idx] = self.metaStack[img_idx].__dict__[slot]
+   
                     
         return
 
@@ -655,7 +715,7 @@ class PADStack:
                     else:
                         #print(len(curr_peaks))
                         ENABLE_QUADRATIC = 1;
-                        if (len(curr_peaks)>=2):
+                        if (len(curr_peaks)>=50000):
                             zero_peak = 0.5*(bin_edge[curr_peaks[0]]+bin_edge[curr_peaks[0]+1])
                             debounce_msg = ""
                             if (zero_peak >= self.fpBound[0]) and (zero_peak <= self.fpBound[1]):
@@ -665,7 +725,7 @@ class PADStack:
                             else:
                                 debounce_amount = zero_peak
                                 debounce_reason = "Topo out of range"
-                        elif (len(curr_peaks)==1):
+                        elif (len(curr_peaks)>=1):
                             peak_width, width_heights, left_ips, right_ips = scipy.signal.peak_widths(curr_hist, curr_peaks);
                             #print(peak_width)
                             left_idx = math.floor(left_ips[0])
@@ -679,6 +739,7 @@ class PADStack:
                             #print(quad_fit_ret)
                             zero_peak = vertex_pos(*quad_coeff);
                             debounce_amount = zero_peak
+                            print("Zero peak: {}".format(zero_peak))
                             ## XXX FIXME OVERRIDE
                             #if (asic_idx == 11):
                             #    print("Raw peak amount: {}".format(zero_peak))
@@ -686,7 +747,7 @@ class PADStack:
                             #zero_peak = 0
 
                             # Time to try fitting two peaks under certain conditions
-                            COMPUTE_TWOPEAK = 1 # Eventually put make an intelligent decision
+                            COMPUTE_TWOPEAK = 0 # Eventually put make an intelligent decision
                             if COMPUTE_TWOPEAK:
                                 raw_data = np.concatenate([np.full((count,),midpoint) for count, midpoint in zip(curr_hist, 0.5*(bin_edge[0:-1]+bin_edge[1:]))])
                                 asic_skew = scipy.stats.skew(raw_data)
