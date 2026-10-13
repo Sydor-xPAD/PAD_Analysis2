@@ -46,8 +46,14 @@ fg_img.bgSub(bg_img);
 fg_img.saveImg("bgsub_glassyc.hdf5")
 
 # At this point, we would apply the defect mask.  The first step is to load the masks:
+defect_img = padstack.PADStack("/usr/local/etc/xPAD00013/", "MMPAD", "DEFECT")
+# This will load /usr/local/etc/xPAD00013/hot_pixels.pgm and
+# /usr/local/etc/xPAD00013/dark_pixels.pgm
+## THE TRAILING SLASH in padstack.PADSTACK IS MANDATORY!
 
 # Once the masks are loaded, we can apply them to the background-subtracted image stack.
+
+fg_img.applyDefect(defect_img);
 
 ## Perform a debounce.  For this instance, the number of bins in the histogram
 ## used for the debounce is altered.  The histogram limits are in fg_img.histBinStart and fg_img.histBinEnd, defaulting to (-200,800).  1000 bins makes each bin 1 ADU wide, versus the default of 200 bins for 5 ADU bin width.
@@ -68,11 +74,13 @@ fg_img.apply_debounce();
 ## With the bounce removed, there is no random offset, so the flatfield gain correction may be applied.  If using the factory default flatfield map, this step also implicity applies the defect map, as the defects are marked as bad pixels in the flatfield map.
 
 ## Do the flatfield correction
-#fg_img.applyFF(flat_image) 
+flat_image = padstack.PADStack("/usr/local/etc/xPAD00013/flatfield.raw", "MMPAD", "FF")
+fg_img.applyFF(flat_image) 
 
 
 ## For some analyses, it may be useful to mask out regions of the image.  For example, in powder diffraction, there may be Laue spots, or a beam stop in the image.  The below marks the non-zero pixels in the mask as NaN.
-# fg_img.augmentMask(happyimg);
+mask_img = padstack.PADStack("experiment_mask.tiff", "MMPAD", "SINGLEMASK")
+fg_img.augmentMask(mask_img)
 
 ## Threading without the global interpreter lock has been implemented.
 ## This performs a print showing the if GIL has been re-enabled.  These lines
@@ -85,25 +93,27 @@ print(sys._is_gil_enabled()
 ## file.  There must be no comments in the file, and the submodules must be
 ## in order from 0 on up.
 
+fg_img.geocorr_truethread("/usr/local/etc/xPAD00013/gc_params.cfg")
+
 ## There are separate functions for geocorrection of regular-sized images (512Wx512H) and the larger half-MegaPAD (1024Wx512H)
 
 #fg_img.geocorr_truethread_kega("ihep_gc.cfg")
 #fg_img_ndb.geocorr_truethread_kega("ihep_gc.cfg")
 
 ## Here we save the image as a series of double rasters in a raw binary format.
-#out_file = open("ihep_data.img", "wb");
+out_file = open("mmpad_data.img", "wb");
 
-#for image_frame in fg_img.imgStack:
-#    image_frame.tofile(out_file)
+for image_frame in fg_img.imgStack:
+    image_frame.tofile(out_file)
 
-#out_file.close()
+out_file.close()
 
 ## Save the image and metadata in an HDF5 file.  The image raster is in dataset
 ## `image`
 ## Once again, there are separate saving routines for regular-sized images and half-MegaPAD-sized images.
 fg_img.saveImg("glassyc_data.hdf5")
 #fg_img_ndb.saveImgKega("s175mask_ndb_data.hdf5")
-bg_img.saveImgKega("glassyc_bg.hdf5")
+bg_img.saveImg("glassyc_bg.hdf5")
 
 sys.exit(0)
 

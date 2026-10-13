@@ -75,7 +75,8 @@ def bilinear_interp(img, src_y, src_x):
     return (yx[1]-yx[0])*dy+yx[0]
     
                              
-    
+## This parses a geocal file.  It assumes there are no
+## comments and the submodules are in order.
 def parse_gc_params(gc_filename):
     gc_file = open(gc_filename, 'r')
     gc_list = []
@@ -493,6 +494,8 @@ class PADStack:
 
         return
 
+    ## This always saves the stack into an HDF5 file.  The filename is given by
+    ## out_filename.  For KegaPAD, use saveImgKega().
     def saveImg(self, out_filename):
         with h5py.File(out_filename, 'w') as f:
             num_img = len(self.imgStack)
@@ -623,7 +626,11 @@ class PADStack:
         self.dtype = kf.dtype
         kf.close()
         self.op_log = []        # Start with a blank log of recorded operations
-        
+
+    ## MaskFilename is an optional parameter containing a mask image
+    ## of pixels, where non-zero indicates the user has said this is a
+    ## zero-photon pixel.  In this event, the curve fitting will not
+    ## be performed
     def apply_debounce(self, MaskFilename = None):
         self.debounce_log = []; # Clear the debounce log
         self.asic_stats = []
@@ -684,7 +691,9 @@ class PADStack:
                     curr_hist,bin_edge = np.histogram(curr_asic, bins=self.numBins, range=(self.histBinStart, self.histBinEnd))
 
                     self.asic_details.append([frame_idx, asic_idx, curr_hist, bin_edge])
-                    
+
+                    ## The below function finds all peaks of specified height
+                    ## and in the range width provided
                     peak_ret = scipy.signal.find_peaks(curr_hist, height=self.fpHeight, width=self.fpWidth);
                     curr_peaks = peak_ret[0]
 
@@ -706,7 +715,8 @@ class PADStack:
                             hist_file.close()
                         
 
-                    # If a mask is defined, we use the mask as the determinant of bounce amound
+                    # If a mask is defined, we use the mask as the determinant of bounce amount.
+                    # If defined, there is no curve fitting.
                     if use_maskfile:
                         sel_pixels = np.extract(np.not_equal(0, mask_asic), full_asic)
                         debounce_amount = np.nanmedian(sel_pixels)
@@ -728,11 +738,16 @@ class PADStack:
                         elif (len(curr_peaks)>=1):
                             peak_width, width_heights, left_ips, right_ips = scipy.signal.peak_widths(curr_hist, curr_peaks);
                             #print(peak_width)
+                            # Get indices of bounds of peaks
                             left_idx = math.floor(left_ips[0])
                             right_idx = math.ceil(right_ips[0])
                             #print(curr_peaks)
+                            # Compute bin centers in the range of the peak to
+                            # use as x-values for curve fit
                             x_centers = 0.5 *(bin_edge[left_idx:right_idx]+bin_edge[(left_idx+1):(right_idx+1)]);
                             ##print(x_centers)
+                            # The -1 is since the parabola opens downwards:
+                            # ax^2+bx+c.  I assume the 400 is a guess based on a peak of at least 400 counts, but I do not remember.
                             quad_fit_ret = scipy.optimize.curve_fit(quadratic, x_centers, curr_hist[left_idx:right_idx], [-1,20,400])
                             quad_coeff = quad_fit_ret[0]
                             debounce_msg = quad_coeff
@@ -756,9 +771,20 @@ class PADStack:
                                 
                                     fitter = GaussFit2()
                                     peak_height = curr_hist[curr_peaks[0]]
+                                    # readnoise below is determined experimentally
                                     readnoise = 14.0
+                                    # From the equation of a normal distribution
                                     peak_scale = peak_height*math.sqrt(2*math.pi*readnoise**2)
                                     #initial_guess = [curr_hist[curr_peaks[0]], 14.0, zero_peak, curr_hist[curr_peaks[0]], 14.0, zero_peak+60, 0]
+                                    # Assume readnoise as a starting guess for
+                                    # width of the two peaks.  Use the
+                                    # position of the peak as a first guess
+                                    # for position.  Start by assuming the 
+                                    # second peak is half the height of the
+                                    # first.  The 40 comes from ADU/photon
+                                    # of the sensor at a given energy, and is
+                                    # used as the starting separation between
+                                    # the two peaks
                                     initial_guess = [peak_scale, readnoise, zero_peak, peak_scale/2.0, readnoise, zero_peak+40, 0]
                                     print("ASIC: {}".format(asic_idx))
                                     print(initial_guess)
@@ -781,6 +807,9 @@ class PADStack:
 
                                         # Make sure the new peak is roughly in range
                                         ## Below 15 could be a function of photon energy
+                                        ## If the two peaks are sufficiently
+                                        ## close together (15 versus expected
+                                        ## 40, above), assume it is only one peak
                                         if math.fabs(temp_peak-zero_peak) < 15:
                                             zero_peak = temp_peak
                                         
@@ -809,13 +838,17 @@ class PADStack:
         num_img = self.numImages
 
         self.op_log.append("Applied defect map.")
-        
+
+        ## The defect mask is either 0 or NaN, so addition will NaN out
+        ## any defects
         for frame_idx in range(num_img):
             cap_num = frame_idx % num_caps
             self.imgStack[frame_idx] = self.imgStack[frame_idx]+defectImg.imgStack[self.capIndex[cap_num]]
 
         return
 
+    ## This loads a single frame to use as a mask.  Non-zero pixels become
+    ## NaNs.  This is intended for use in conjection with augmentMask()
     def loadSingleMask(self, mask_file, imgType):
         if imgType == 'KECK':
             self.numImages = 1
@@ -858,7 +891,11 @@ class PADStack:
             self.imgStack[imgIdx] = self.imgStack[imgIdx] + singlemaskImg.imgStack[0] # The mask images are either 0 or NaN, thereby either not changing pixels or masking them out
 
         return
-    
+
+    ## loadDefect is meant to load a pair of defect images: a hot mask
+    ## and a dark mask, by appending to a base name, which could be a
+    ## directory or a directory followed by a mask type prefix such
+    ## as UNI
     def loadDefect(self, xpad_file, imgType):
         
         if imgType == 'KECK':
@@ -1147,6 +1184,10 @@ class PADStack:
             
         return
 
+    ## This does a threaded implementation of geocorrection.  The interpolation
+    ## method on offer is bilinear.  For speed, it is important that the
+    ## rectilinear interpolation is used, which is implemented with meshgrid
+    ## and rotate_thread_ninterp()
     def geocorr_truethread(self, gc_params_filename=None):
         full_size=(612, 532)    # Size of a full normal camera frame after geocal
         sm_size = (128, 256)
@@ -1235,6 +1276,8 @@ class PADStack:
                 out_slice[top_left_y:(top_left_y+curr_out_sm.shape[0]),top_left_x:(top_left_x+curr_out_sm.shape[1])] = curr_out_sm
             self.imgStack[slice_idx] = out_slice
 
+    ## This is like geocorr_truethread(), but for KegaPAD images, which have
+    ## some different numbering schemes
     def geocorr_truethread_kega(self, gc_params_filename=None):
         full_size=(612, 1072)    # Size of a full normal camera frame after geocal
         sm_size = (128, 256)
